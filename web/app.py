@@ -17,6 +17,8 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from models.price import get_validation_df
+
 DB_PATH = Path(__file__).parent.parent / "data" / "news.db"
 
 # ─────────────────────────────────────────────────────────────
@@ -424,6 +426,16 @@ def load_articles() -> pd.DataFrame:
     df["published_at"]    = pd.to_datetime(df["published_at"], errors="coerce")
     return df
 
+@st.cache_data(ttl=60)
+def load_validation_returns() -> pd.DataFrame:
+    if not DB_PATH.exists():
+        return pd.DataFrame()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return get_validation_df(conn)
+    finally:
+        conn.close()
+
 
 # ─────────────────────────────────────────────────────────────
 # Keywords 聚合工具
@@ -525,6 +537,51 @@ def source_metric_rows(src_counts: "pd.Series") -> str:
         )
     return '<div class="mc-source-list">' + "".join(rows) + "</div>"
 
+def related_articles_for_driver(df: "pd.DataFrame", keyword: str) -> "pd.DataFrame":
+    if df.empty or "keywords_list" not in df.columns:
+        return pd.DataFrame()
+    mask = df["keywords_list"].apply(
+        lambda kws: isinstance(kws, list) and keyword in kws
+    )
+    related = df[mask].copy()
+    if related.empty:
+        return related
+    return related.sort_values(
+        ["impact_score", "published_at"],
+        ascending=[False, False],
+        na_position="last",
+    )
+
+def driver_performance(related: "pd.DataFrame", validation_returns: "pd.DataFrame") -> dict:
+    if related.empty or validation_returns.empty:
+        return {}
+    article_ids = set(related["id"].dropna().astype(int).tolist())
+    if not article_ids or "article_id" not in validation_returns.columns:
+        return {}
+    matched = validation_returns[validation_returns["article_id"].isin(article_ids)]
+    if matched.empty:
+        return {}
+    perf = {}
+    for col in ["return_1d", "return_3d", "return_5d"]:
+        if col in matched.columns:
+            avg = matched[col].dropna().mean()
+            if not pd.isna(avg):
+                perf[col] = avg
+    return perf
+
+def fmt_pct(val) -> str:
+    if val is None or pd.isna(val):
+        return "—"
+    return f"{float(val):+.2f}%"
+
+def fmt_time(val) -> str:
+    if pd.isna(val):
+        return "—"
+    try:
+        return val.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(val)
+
 def _build_insight(today_cnt: int, avg_score: float, pos_pct: float, neg_pct: float,
                    src_counts: "pd.Series", analyzed: int) -> str:
     avg_str = f"{avg_score:.1f}" if not pd.isna(avg_score) else "—"
@@ -615,6 +672,7 @@ top5 = (
 
 # Keyword stats（已分析文章）
 kw_stats = build_keyword_stats(df_ana, top_n=20)
+validation_returns = load_validation_returns()
 
 # ─────────────────────────────────────────────────────────────
 # 側邊欄
@@ -800,17 +858,67 @@ if page == "Dashboard":
             top_drivers = kw_stats.head(8)
             rank_emojis = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣"]
             for idx, r in enumerate(top_drivers.itertuples(), 0):
-                mix_css = {"positive": "md-pos", "negative": "md-neg"}.get(r.sentiment_mix, "md-mix")
                 emoji   = rank_emojis[idx] if idx < len(rank_emojis) else f"#{idx+1}"
-                st.markdown(
-                    f'<div class="md-card {mix_css}">'
-                    f'<span class="md-rank">{emoji}</span>'
-                    f'<span class="md-kw">{r.keyword}</span>'
-                    f'<span class="md-meta">出現 {r.count} 次 · avg {r.avg_impact:.1f}/10</span>'
-                    f'<span class="md-score">驅動力 {r.driver_score:.0f}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
+                related = related_articles_for_driver(df_ana, r.keyword)
+                perf = driver_performance(related, validation_returns)
+                expander_title = (
+                    f"{emoji} {r.keyword} · 出現 {r.count} 次 · "
+                    f"avg {r.avg_impact:.1f}/10 · 驅動力 {r.driver_score:.0f}"
                 )
+                with st.expander(expander_title):
+                    st.markdown("**Summary**")
+                    sum_cols = st.columns(3)
+                    sum_cols[0].metric("相關新聞", f"{len(related)}")
+                    sum_cols[1].metric("平均影響力", f"{r.avg_impact:.1f}/10")
+                    sum_cols[2].metric("驅動力", f"{r.driver_score:.0f}")
+
+                    st.markdown("**Driver Performance**")
+                    if perf:
+                        perf_cols = st.columns(3)
+                        perf_cols[0].metric("Avg T+1", fmt_pct(perf.get("return_1d")))
+                        perf_cols[1].metric("Avg T+3", fmt_pct(perf.get("return_3d")))
+                        perf_cols[2].metric("Avg T+5", fmt_pct(perf.get("return_5d")))
+                    else:
+                        st.caption("Insufficient validation data")
+
+                    st.markdown("**Related News**")
+                    if related.empty:
+                        st.caption("No related news")
+                    else:
+                        display_related = related.head(12)
+                        if len(related) > len(display_related):
+                            st.caption(f"顯示前 {len(display_related)} / {len(related)} 篇，依影響力與時間排序")
+                        for news_idx, (_, article) in enumerate(display_related.iterrows(), 1):
+                            score = (
+                                f"{float(article['impact_score']):.1f}/10"
+                                if pd.notna(article.get("impact_score")) else "—"
+                            )
+                            news_title = str(article.get("title") or "Untitled")
+                            news_expander_title = f"{news_idx}. {news_title[:64]}{'…' if len(news_title) > 64 else ''}"
+                            with st.expander(news_expander_title):
+                                article_url = str(article.get("url") or "").strip()
+                                if article_url:
+                                    st.markdown(f"**[{news_title}]({article_url})**")
+                                else:
+                                    st.markdown(f"**{news_title}**")
+
+                                meta_cols = st.columns(4)
+                                meta_cols[0].caption(f"Source: {SOURCE_META.get(article.get('source'), {}).get('label', article.get('source', '—'))}")
+                                meta_cols[1].caption(f"Time: {fmt_time(article.get('published_at'))}")
+                                meta_cols[2].caption(f"Sentiment: {article.get('sentiment', '—')}")
+                                meta_cols[3].caption(f"Impact: {score}")
+
+                                reason_text = str(article.get("reason") or "").strip()
+                                if reason_text:
+                                    reason_short = reason_text[:150] + ("…" if len(reason_text) > 150 else "")
+                                    st.markdown(f"**AI Analysis:**  \n{reason_short}")
+
+                                if article_url:
+                                    st.link_button(
+                                        "查看原文",
+                                        article_url,
+                                        key=f"driver_{idx}_news_{article.get('id')}_{news_idx}",
+                                    )
 
         with md_right:
             # Keyword Frequency 橫條圖（top 12）
