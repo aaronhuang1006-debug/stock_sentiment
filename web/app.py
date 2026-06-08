@@ -82,29 +82,29 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
 .hero-reason    { font-size: .83rem; color: #3d4460; line-height: 1.6;
                   border-top: 1px solid #d1daf5; padding-top: .6rem; margin-top: .1rem; }
 .reason-box {
-    background: #f8fafc;
-    border: 1px solid #dbe4f0;
-    border-left: 3px solid #7c8eb8;
+    background: #f8fafd;
+    border: 1px solid #eaecf4;
+    border-left: 2px solid #c7d2e8;
     border-radius: 6px;
-    padding: .65rem .8rem;
-    margin: .55rem 0;
+    padding: .5rem .75rem;
+    margin: .45rem 0;
 }
 .reason-title {
-    font-size: .68rem;
-    font-weight: 800;
-    color: #64748b;
+    font-size: .63rem;
+    font-weight: 700;
+    color: #94a3b8;
     text-transform: uppercase;
     letter-spacing: .07em;
-    margin-bottom: .35rem;
+    margin-bottom: .28rem;
 }
 .reason-list {
     margin: 0;
-    padding-left: 1rem;
-    color: #334155;
-    font-size: .8rem;
-    line-height: 1.55;
+    padding-left: .9rem;
+    color: #475569;
+    font-size: .76rem;
+    line-height: 1.5;
 }
-.reason-list li { margin-bottom: .2rem; }
+.reason-list li { margin-bottom: .15rem; }
 
 /* ── Metric 卡片 ── */
 .mc {
@@ -147,27 +147,29 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
              text-transform: uppercase; letter-spacing: .08em;
              margin: 1.1rem 0 .65rem; }
 
-/* ── Top 5 카드 ── */
+/* ── Top 5 卡片 ── */
 .t5-card {
-    border: 1px solid #e2e4e9;
-    border-radius: 7px;
-    padding: .75rem 1rem;
-    margin-bottom: .45rem;
+    background: #ffffff;
+    border: 1px solid #e8eaef;
+    border-left: 3px solid #cbd5e1;
+    border-radius: 8px;
+    padding: .7rem 1rem;
+    margin-bottom: .4rem;
     display: flex;
     align-items: center;
     gap: 12px;
-    min-height: 70px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.03);
 }
-.t5-card-high { background: #fff5f5; border-color: #fcc; }
-.t5-card-mid  { background: #fffaf4; border-color: #fdd9a8; }
-.t5-card-low  { background: #f9f9fb; border-color: #e2e4e9; }
+.t5-card-high { border-left: 3px solid #ef4444; }
+.t5-card-mid  { border-left: 3px solid #f59e0b; }
+.t5-card-low  { border-left: 3px solid #cbd5e1; }
 .t5-rank {
     font-size: 1rem; font-weight: 900; color: #d1d5db;
     min-width: 28px; text-align: center; flex-shrink: 0;
     font-variant-numeric: tabular-nums;
 }
 .t5-card-high .t5-rank { color: #fca5a5; }
-.t5-card-mid  .t5-rank { color: #fdba74; }
+.t5-card-mid  .t5-rank { color: #fcd34d; }
 .t5-body  { flex: 1; min-width: 0; }
 .t5-ttl   { font-size: .88rem; font-weight: 600; color: #0d0f14;
             line-height: 1.4; margin-bottom: .35rem; }
@@ -199,39 +201,28 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
 .s-low  { background:#f9fafb; color:#6b7280; border:1px solid #e5e7eb; }
 .s-none { background:#f9fafb; color:#d1d5db; border:1px solid #f3f4f6; }
 
-/* ── 新聞卡片 ── */
-.ncard {
+/* ── 新聞卡片（ncard：related news；news-card：主列表，統一白底+左色條）── */
+.ncard, .news-card {
     background: #ffffff;
-    border: 1px solid #e2e4e9;
+    border: 1px solid #e8eaef;
+    border-left: 3px solid #cbd5e1;
     border-radius: 8px;
-    padding: .85rem 1.1rem .8rem;
-    margin-bottom: .5rem;
-    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    padding: .8rem 1rem .75rem;
+    margin-bottom: .45rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,.03);
 }
-.ncard:hover { border-color: #a0a8bf; }
-.nmeta  { display:flex; gap:7px; flex-wrap:wrap; align-items:center; margin-bottom:.4rem; }
-.ntime  { font-size:.72rem; color:#b0b5c3; }
-.nttl   { font-size:1.05rem; font-weight:620; color:#0d0f14; line-height:1.5;
-          margin:0 0 .2rem; }
+.ncard:hover, .news-card:hover { border-color: #b0bcd4; box-shadow: 0 2px 6px rgba(0,0,0,.06); }
+.nmeta  { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:.35rem; }
+.ntime  { font-size:.71rem; color:#b0b5c3; }
+.nttl   { font-size:.97rem; font-weight:600; color:#0d0f14; line-height:1.5; margin:0 0 .15rem; }
 .nttl a { color:inherit; text-decoration:none; }
 .nttl a:hover { color:#2563eb; text-decoration:underline; }
-.nstock { font-size:.7rem; color:#6b7280; background:#f3f4f6;
-          border-radius:3px; padding:1px 5px; }
-.news-card {
-    position: relative;
-    border: 1px solid #d8dee9;
-    border-left: 4px solid #94a3b8;
-    border-radius: 8px;
-    padding: .9rem 1.05rem .85rem;
-    margin-bottom: .55rem;
-    box-shadow: 0 1px 3px rgba(15,23,42,.05);
-}
-.news-card:hover { box-shadow: 0 2px 10px rgba(15,23,42,.08); }
-.news-card-positive { background: #f0fdf4; border-left-color: #10b981; }
-.news-card-negative { background: #fff1f2; border-left-color: #e11d48; }
-.news-card-neutral  { background: #fff7ed; border-left-color: #f59e0b; }
-.news-card-pending  { background: #f1f5f9; border-left-color: #64748b; border-style: solid; }
-.news-card-high     { border-color: #fca5a5; box-shadow: 0 2px 10px rgba(220,38,38,.1); }
+.nstock { font-size:.69rem; color:#6b7280; background:#f3f4f6; border-radius:3px; padding:1px 5px; }
+/* Left-border accent by sentiment */
+.news-card-positive { border-left-color: #10b981; }
+.news-card-negative { border-left-color: #e11d48; }
+.news-card-neutral  { border-left-color: #f59e0b; }
+.news-card-pending  { border-left-color: #94a3b8; }
 .news-card-top {
     display: flex;
     justify-content: space-between;
@@ -239,26 +230,28 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
     gap: 12px;
 }
 .news-card-title { flex: 1; min-width: 0; }
-.news-card-badges { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:.45rem; }
+.news-card-badges { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:.4rem; }
+/* High impact: subtle outline badge only, no card re-coloring */
 .hi-badge {
     display: inline-block;
-    padding: 2px 8px;
+    padding: 1px 7px;
     border-radius: 4px;
-    background: #dc2626;
-    color: #fff;
-    font-size: .68rem;
-    font-weight: 800;
+    background: #fff1f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+    font-size: .67rem;
+    font-weight: 700;
     white-space: nowrap;
 }
 .pending-badge {
     display: inline-block;
-    padding: 2px 8px;
+    padding: 1px 7px;
     border-radius: 4px;
-    background: #e0e7ff;
-    color: #3730a3;
-    border: 1px solid #c7d2fe;
-    font-size: .68rem;
-    font-weight: 700;
+    background: #f8fafc;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+    font-size: .67rem;
+    font-weight: 600;
     white-space: nowrap;
 }
 
@@ -596,20 +589,14 @@ def score_pill(val) -> str:
     return f'<span class="spill {css}">{v:.0f}/10 · {tier}</span>'
 
 def news_card_class(row) -> str:
-    classes = ["news-card"]
     sentiment = row.get("sentiment")
     if pd.isna(sentiment):
-        classes.append("news-card-pending")
-    elif str(sentiment) == "正面":
-        classes.append("news-card-positive")
-    elif str(sentiment) == "負面":
-        classes.append("news-card-negative")
-    else:
-        classes.append("news-card-neutral")
-
-    if pd.notna(row.get("impact_score")) and float(row.get("impact_score")) >= 8:
-        classes.append("news-card-high")
-    return " ".join(classes)
+        return "news-card news-card-pending"
+    if str(sentiment) == "正面":
+        return "news-card news-card-positive"
+    if str(sentiment) == "負面":
+        return "news-card news-card-negative"
+    return "news-card news-card-neutral"
 
 def high_impact_badge(val) -> str:
     if pd.notna(val) and float(val) >= 8:
@@ -729,24 +716,20 @@ def render_performance_metrics(perf: dict, title: str) -> None:
     else:
         st.caption("Insufficient validation data")
 
-def render_related_news(related: "pd.DataFrame", key_prefix: str, limit: int = 8) -> None:
-    st.markdown("**Related News**")
+def render_related_news(related: "pd.DataFrame", key_prefix: str, limit: int = 5) -> None:
     if related.empty:
-        st.caption("No related news")
+        st.caption("No related news found.")
         return
 
     display_related = related.head(limit)
-    if len(related) > len(display_related):
-        st.caption(f"顯示前 {len(display_related)} / {len(related)} 篇，依影響力與時間排序")
+    total_related   = len(related)
+    suffix = f" of {total_related}" if total_related > limit else ""
+    st.caption(f"Showing top {len(display_related)}{suffix} related news · sorted by impact")
 
     for news_idx, (_, article) in enumerate(display_related.iterrows(), 1):
-        score = (
-            f"{float(article['impact_score']):.1f}/10"
-            if pd.notna(article.get("impact_score")) else "—"
-        )
-        news_title = str(article.get("title") or "Untitled")
+        news_title  = str(article.get("title") or "Untitled")
         article_url = str(article.get("url") or "").strip()
-        title_html = (
+        title_html  = (
             f'<a href="{escape(article_url)}" target="_blank">{escape(news_title)}</a>'
             if article_url else escape(news_title)
         )
@@ -763,16 +746,6 @@ def render_related_news(related: "pd.DataFrame", key_prefix: str, limit: int = 8
   </div>
   <div class="nttl">{news_idx}. {title_html}</div>
 </div>""", unsafe_allow_html=True)
-
-        if st.toggle(
-            "AI Analysis",
-            value=False,
-            key=f"{key_prefix}_analysis_{article.get('id')}_{news_idx}",
-        ):
-            st.markdown(format_reason(str(article.get("reason") or "")), unsafe_allow_html=True)
-
-        if article_url:
-            st.markdown(f"[查看原文]({article_url})")
 
 def _build_insight(today_cnt: int, avg_score: float, pos_pct: float, neg_pct: float,
                    src_counts: "pd.Series", analyzed: int) -> str:
@@ -1066,7 +1039,7 @@ if page == "Dashboard":
                     sum_cols[2].metric("驅動力", f"{r.driver_score:.0f}")
 
                     render_performance_metrics(perf, "Driver Performance")
-                    render_related_news(related, key_prefix=f"driver_{idx}", limit=8)
+                    render_related_news(related, key_prefix=f"driver_{idx}", limit=5)
 
         with md_right:
             # Keyword Frequency 橫條圖（top 12）
@@ -1150,7 +1123,7 @@ if page == "Dashboard":
                     sum_cols[2].metric("Keyword Score", f"{keyword_score:.0f}")
 
                     render_performance_metrics(perf, "Keyword Performance")
-                    render_related_news(related, key_prefix=f"high_kw_{idx}", limit=6)
+                    render_related_news(related, key_prefix=f"high_kw_{idx}", limit=5)
             st.markdown("")
 
     st.divider()
@@ -1220,19 +1193,15 @@ if page == "Dashboard":
 
     # ── 套用篩選 ──────────────────────────────────────────────
     news_df = df_all.copy()
-    debug_counts = {"all": len(news_df)}
 
     if keyword:
         news_df = news_df[news_df["title"].str.contains(keyword, case=False, na=False)]
-    debug_counts["keyword"] = len(news_df)
     if selected_sentiment == "尚未分析":
         news_df = news_df[news_df["sentiment"].isna()]
     elif selected_sentiment != "全部":
         news_df = news_df[news_df["sentiment"] == selected_sentiment]
-    debug_counts["sentiment"] = len(news_df)
     if selected_source != "全部來源":
         news_df = news_df[news_df["source"] == selected_source]
-    debug_counts["source"] = len(news_df)
     if sort_by_score:
         news_df = news_df.sort_values("impact_score", ascending=False, na_position="last")
 
@@ -1241,7 +1210,6 @@ if page == "Dashboard":
         display_news_df = news_df
     else:
         display_news_df = news_df.head(int(news_count_option))
-    debug_counts["display"] = len(display_news_df)
 
     # ── 新聞列表 ──────────────────────────────────────────────
     st.markdown(
@@ -1287,21 +1255,17 @@ if page == "Dashboard":
                     + "</div>"
                 )
 
+            hi_badge_html = high_impact_badge(row['impact_score'])
             st.markdown(f"""
 <div class="{news_card_class(row)}">
-  <div class="news-card-top">
-    <div class="news-card-title">
-      <div class="nttl">{title_html}</div>
-      <div class="news-card-badges">
-        {src_badge(row['source'])}
-        <span class="ntime">{pub_time}</span>
-        {senti_chip(row['sentiment'])}
-        {score_pill(row['impact_score'])}
-        {pending_badge(is_unanalyzed)}
-        {stock_tag}
-      </div>
-    </div>
-    <div>{high_impact_badge(row['impact_score'])}</div>
+  <div class="nttl">{title_html}</div>
+  <div class="news-card-badges">
+    {src_badge(row['source'])}
+    <span class="ntime">{pub_time}</span>
+    {senti_chip(row['sentiment'])}
+    {score_pill(row['impact_score'])}
+    {hi_badge_html}
+    {stock_tag}
   </div>
   {kw_row_html}
 </div>""", unsafe_allow_html=True)
