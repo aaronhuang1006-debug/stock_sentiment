@@ -855,6 +855,7 @@ with st.sidebar:
     source_opts        = ["全部來源"] + sorted(df_all["source"].unique().tolist())
     selected_source    = st.selectbox("來源", source_opts)
     sort_by_score      = st.toggle("依影響力排序", value=False)
+    news_count_option  = st.selectbox("顯示新聞數量", ["10", "20", "50", "All"], index=1)
     st.divider()
     if st.button("重新整理", use_container_width=True):
         st.cache_data.clear()
@@ -1167,15 +1168,21 @@ if page == "Dashboard":
     if sort_by_score:
         news_df = news_df.sort_values("impact_score", ascending=False, na_position="last")
 
+    filtered_total = len(news_df)
+    if news_count_option == "All":
+        display_news_df = news_df
+    else:
+        display_news_df = news_df.head(int(news_count_option))
+
     # ── 新聞列表 ──────────────────────────────────────────────
     st.markdown(
         f'<div class="sec-title">新聞列表'
         f'<span style="font-weight:400;text-transform:none;letter-spacing:0;color:#b0b5c3;margin-left:8px">'
-        f'顯示 {len(news_df)} / {total} 篇</span></div>',
+        f'顯示 {len(display_news_df)} / {filtered_total} 篇</span></div>',
         unsafe_allow_html=True,
     )
 
-    if news_df.empty:
+    if display_news_df.empty:
         st.markdown("""
 <div class="empty-state">
   <div class="empty-state-icon">🔍</div>
@@ -1183,7 +1190,7 @@ if page == "Dashboard":
   <div class="empty-state-sub">請調整左側篩選條件後再試。</div>
 </div>""", unsafe_allow_html=True)
     else:
-        for _, row in news_df.iterrows():
+        for news_idx, (_, row) in enumerate(display_news_df.iterrows(), 1):
             pub_time = (
                 row["published_at"].strftime("%Y-%m-%d %H:%M")
                 if pd.notna(row["published_at"]) else "—"
@@ -1218,14 +1225,20 @@ if page == "Dashboard":
   {kw_row_html}
 </div>""", unsafe_allow_html=True)
 
-            expander_label = "AI Analysis · Pending analysis" if is_unanalyzed else "AI Analysis"
-            with st.expander(expander_label):
+            toggle_label = "AI Analysis · Pending analysis" if is_unanalyzed else "AI Analysis"
+            if st.toggle(
+                toggle_label,
+                value=False,
+                key=f"news_analysis_{row['id']}_{news_idx}",
+            ):
                 if is_unanalyzed:
                     st.markdown(format_pending_analysis(), unsafe_allow_html=True)
                 elif pd.notna(row["reason"]) and row["reason"]:
                     st.markdown(format_reason(str(row["reason"])), unsafe_allow_html=True)
                 else:
                     st.markdown(format_reason(""), unsafe_allow_html=True)
+
+        st.caption(f"Showing {len(display_news_df)} of {filtered_total} articles")
 
 else:
     render_validation_tab(DB_PATH)
