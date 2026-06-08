@@ -91,6 +91,28 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
 .mc-value { font-size: 2.1rem; font-weight: 800; color: #0d0f14;
             line-height: 1.15; margin: .3rem 0 .18rem; letter-spacing: -.03em; }
 .mc-sub   { font-size: .74rem; color: #b0b5c3; line-height: 1.4; }
+.mc-source-list { display: grid; gap: .35rem; margin: .45rem 0 .2rem; }
+.mc-source-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .55rem;
+    min-width: 0;
+}
+.mc-source-name {
+    font-size: .82rem;
+    font-weight: 650;
+    color: #374151;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mc-source-count {
+    font-size: .9rem;
+    font-weight: 800;
+    color: #0d0f14;
+    font-variant-numeric: tabular-nums;
+}
 
 /* ── Section title ── */
 .sec-title { font-size: .7rem; font-weight: 700; color: #8a8f9e;
@@ -170,6 +192,8 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
 
 /* ── Sidebar ── */
 [data-testid="stSidebar"] { background:#ffffff; border-right:1px solid #e2e4e9; }
+[data-testid="stSidebar"] { min-width: 260px; max-width: 310px; }
+[data-testid="stSidebar"] > div:first-child { padding-left: 1rem; padding-right: 1rem; }
 .sb-title { font-size:.68rem; font-weight:700; color:#8a8f9e;
             text-transform:uppercase; letter-spacing:.08em; margin-bottom:.6rem; }
 
@@ -250,9 +274,19 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
 .pipe-dot-err { color: #e11d48; font-size: .7rem; }
 .pipe-dot-na  { color: #d1d5db; font-size: .7rem; }
 
-/* 緊縮 streamlit 內建間距 */
-.block-container { padding-top: 1rem !important; }
+/* 緊縮 streamlit 內建間距，同時解除寬螢幕最大寬度限制 */
+.block-container {
+    max-width: none !important;
+    width: 100% !important;
+    padding: 1rem 2rem 2rem !important;
+}
+[data-testid="stMainBlockContainer"] { max-width: none !important; }
+[data-testid="column"] > div { width: 100%; }
 [data-testid="stExpander"] { border:none !important; box-shadow:none; }
+
+@media (max-width: 900px) {
+    .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
+}
 
 /* ── Market Drivers 區塊 ── */
 .md-section { margin: .6rem 0 .4rem; }
@@ -479,6 +513,18 @@ def score_pill(val) -> str:
     else:        css, tier = "s-low",  "低影響"
     return f'<span class="spill {css}">{v:.0f}/10 · {tier}</span>'
 
+def source_metric_rows(src_counts: "pd.Series") -> str:
+    rows = []
+    for source, count in src_counts.items():
+        label = SOURCE_META.get(source, {}).get("label", source)
+        rows.append(
+            '<div class="mc-source-row">'
+            f'<span class="mc-source-name">{label}</span>'
+            f'<span class="mc-source-count">{count}</span>'
+            '</div>'
+        )
+    return '<div class="mc-source-list">' + "".join(rows) + "</div>"
+
 def _build_insight(today_cnt: int, avg_score: float, pos_pct: float, neg_pct: float,
                    src_counts: "pd.Series", analyzed: int) -> str:
     avg_str = f"{avg_score:.1f}" if not pd.isna(avg_score) else "—"
@@ -587,6 +633,16 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
+    # ── 頁面入口 ─────────────────────────────────────────────
+    st.markdown('<div class="sb-title">頁面</div>', unsafe_allow_html=True)
+    page = st.radio(
+        "頁面",
+        ["Dashboard", "Price Validation"],
+        label_visibility="collapsed",
+        key="page_nav",
+    )
+    st.divider()
+
     # ── 文章統計 + 未分析提醒 ─────────────────────────────────
     unanalyzed = total - analyzed
     st.markdown(
@@ -655,13 +711,11 @@ with st.sidebar:
     )
 
 # ─────────────────────────────────────────────────────────────
-# 主 Tab 結構
+# 主頁面結構
 # ─────────────────────────────────────────────────────────────
 from web.validation_page import render_validation_tab
 
-tab_main, tab_val = st.tabs(["📊 Main Dashboard", "📈 Price Validation"])
-
-with tab_main:
+if page == "Dashboard":
 
     # ── 頁首 ──────────────────────────────────────────────────
     now_str = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
@@ -704,10 +758,6 @@ with tab_main:
 
     # ── 五格 Metric ───────────────────────────────────────────
     pos_neg_val = f"{pos_pct:.0f}% / {neg_pct:.0f}%"
-    src_val     = " · ".join(
-        f"{SOURCE_META.get(s, {}).get('label', s)} {n}"
-        for s, n in src_counts.items()
-    )
 
     metrics = [
         ("今日新聞",   str(today_cnt),
@@ -718,16 +768,17 @@ with tab_main:
          "impact score 均值（1–10）"),
         ("正面 / 負面", pos_neg_val,
          f"正 {pos_cnt} · 負 {neg_cnt} · 中 {neu_cnt}"),
-        ("來源占比",   src_val,
+        ("來源占比",   source_metric_rows(src_counts),
          "各來源文章篇數"),
     ]
 
-    mc_cols = st.columns(5)
+    mc_cols = st.columns([1, 1, 1, 1, 1.15], gap="medium")
     for col, (label, value, sub) in zip(mc_cols, metrics):
+        value_html = value if label == "來源占比" else f'<div class="mc-value">{value}</div>'
         col.markdown(f"""
 <div class="mc">
   <div class="mc-label">{label}</div>
-  <div class="mc-value">{value}</div>
+  {value_html}
   <div class="mc-sub">{sub}</div>
 </div>""", unsafe_allow_html=True)
 
@@ -742,7 +793,7 @@ with tab_main:
             unsafe_allow_html=True,
         )
     else:
-        md_left, md_right = st.columns([3, 2], gap="large")
+        md_left, md_right = st.columns([1.65, 1], gap="large")
 
         with md_left:
             # Top 8 Market Driver 卡片
@@ -798,7 +849,7 @@ with tab_main:
                         alt.Tooltip("avg_impact:Q", title="平均影響力", format=".1f"),
                     ],
                 )
-                .properties(height=300)
+                .properties(height=340)
                 .configure_view(strokeWidth=0)
                 .configure_axis(grid=False)
             )
@@ -832,7 +883,7 @@ with tab_main:
     # ── Top 5 + Sentiment Pie ─────────────────────────────────
     st.markdown('<div class="sec-title">Top 5 · 最高影響力新聞</div>', unsafe_allow_html=True)
 
-    t5_col, pie_col = st.columns([3, 1], gap="large")
+    t5_col, pie_col = st.columns([2.4, 1], gap="large")
 
     with t5_col:
         if top5.empty:
@@ -874,7 +925,7 @@ with tab_main:
             senti_pie_df = senti_pie_df[senti_pie_df["篇數"] > 0]
             senti_pie = (
                 alt.Chart(senti_pie_df)
-                .mark_arc(innerRadius=42, outerRadius=78)
+                .mark_arc(innerRadius=52, outerRadius=92)
                 .encode(
                     theta=alt.Theta("篇數:Q"),
                     color=alt.Color(
@@ -887,10 +938,10 @@ with tab_main:
                     ),
                     tooltip=["情緒:N", "篇數:Q"],
                 )
-                .properties(width=170, height=170)
+                .properties(height=240)
                 .configure_view(strokeWidth=0)
             )
-            st.altair_chart(senti_pie, use_container_width=False)
+            st.altair_chart(senti_pie, use_container_width=True)
 
     # ── 套用篩選 ──────────────────────────────────────────────
     df = df_all.copy()
@@ -961,9 +1012,5 @@ with tab_main:
                 with st.expander("分析理由"):
                     st.markdown(row["reason"])
 
-# ─────────────────────────────────────────────────────────────
-# Price Validation Tab
-# ─────────────────────────────────────────────────────────────
-
-with tab_val:
+else:
     render_validation_tab(DB_PATH)
