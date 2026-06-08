@@ -18,6 +18,33 @@ from typing import Optional
 
 import anthropic
 
+# ── 載入 .env（本機開發用；Cloud 上 .env 不存在時靜默略過）──
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except ImportError:
+    pass
+
+
+def _resolve_api_key() -> str:
+    """
+    API key 載入順序（優先順序由高到低）：
+      1. Streamlit st.secrets["ANTHROPIC_API_KEY"]  — Streamlit Cloud 部署時
+      2. 環境變數 ANTHROPIC_API_KEY                  — 本機 .env 或系統環境
+    回傳空字串表示未設定任何 key。
+    """
+    # 1. Streamlit secrets（僅在 Streamlit runtime 中有效）
+    try:
+        import streamlit as st
+        key = st.secrets.get("ANTHROPIC_API_KEY", "")
+        if key and key.strip():
+            return key.strip()
+    except Exception:
+        pass
+
+    # 2. 環境變數
+    return os.environ.get("ANTHROPIC_API_KEY", "").strip()
+
 VALID_SENTIMENTS = {"正面", "負面", "中立"}
 
 # guideline 檔案路徑（相對於本檔案的專案根目錄）
@@ -103,13 +130,15 @@ class SentimentAnalyzer:
     MODEL = "claude-opus-4-8"
 
     def __init__(self) -> None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        api_key = _resolve_api_key()
         if not api_key:
             raise EnvironmentError(
                 "\n[錯誤] 找不到 ANTHROPIC_API_KEY。\n"
-                "請先設定環境變數，例如：\n"
-                "  export ANTHROPIC_API_KEY='sk-ant-...'\n"
-                "或在 .env 檔案中加入該變數，再透過 python-dotenv 載入。"
+                "載入順序：\n"
+                "  1. Streamlit Cloud：Settings → Secrets → ANTHROPIC_API_KEY\n"
+                "  2. 本機 .env 檔案（複製 .env.example → .env 並填入金鑰）\n"
+                "  3. 系統環境變數：export ANTHROPIC_API_KEY='sk-ant-...'\n"
+                "若只需要 Rule-Based 分析，可改用 --mock-analysis 模式，無需 API key。"
             )
         self._client = anthropic.Anthropic(api_key=api_key)
         # 在初始化時就載入並組裝 system prompt，讓檔案不存在的錯誤提早暴露

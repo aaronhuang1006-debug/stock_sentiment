@@ -11,8 +11,15 @@ altair>=5.0.0
 # HTTP 請求（爬蟲用）
 requests>=2.31.0
 
+# HTML 解析（ctee / money_udn / moneydj 爬蟲）
+beautifulsoup4>=4.12.0
+
 # AI 分析
+# 0.100.0 是正式版（>=0.100.0 等同「盡量新」但確保 Claude Opus 4 支援）
 anthropic>=0.100.0
 
 # 股價資料
 yfinance>=0.2.0
+
+# 環境變數 / Secrets（本機 .env 載入）
+python-dotenv>=1.0.0

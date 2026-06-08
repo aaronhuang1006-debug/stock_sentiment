@@ -1,0 +1,39 @@
+# ── 資料庫（含使用者密碼 hash 與新聞內文，不進版控）──
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# ── 敏感設定 ──
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# ── Python 快取 ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── 執行 log ──
+logs/
+*.log
+
+# ── macOS 系統檔 ──
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V8
+.Trashes
+
+# ── 虛擬環境 ──
+.venv/
+venv/
+env/
+
+# ── 測試 / 暫存 ──
+.pytest_cache/
+*.egg-info/
+dist/
+build/
