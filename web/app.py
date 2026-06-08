@@ -1250,14 +1250,6 @@ if page == "Dashboard":
         f'顯示 {len(display_news_df)} / {filtered_total} 篇</span></div>',
         unsafe_allow_html=True,
     )
-    st.caption(f"Debug: filtered articles = {len(news_df)}")
-    st.caption(f"Debug: display articles = {len(display_news_df)}")
-    st.caption(
-        "Debug filters: "
-        f"all={debug_counts['all']} → keyword={debug_counts['keyword']} "
-        f"→ sentiment={debug_counts['sentiment']} → source={debug_counts['source']} "
-        f"→ display={debug_counts['display']} ({news_count_option})"
-    )
 
     if display_news_df.empty:
         st.markdown("""
@@ -1267,7 +1259,6 @@ if page == "Dashboard":
   <div class="empty-state-sub">請調整左側篩選條件後再試。</div>
 </div>""", unsafe_allow_html=True)
     else:
-        rendered_count = 0
         for idx, row in display_news_df.iterrows():
             pub_time = (
                 row["published_at"].strftime("%Y-%m-%d %H:%M")
@@ -1327,10 +1318,8 @@ if page == "Dashboard":
                     st.markdown(format_reason(str(row["reason"])), unsafe_allow_html=True)
                 else:
                     st.markdown(format_reason(""), unsafe_allow_html=True)
-            rendered_count += 1
 
         st.caption(f"Showing {len(display_news_df)} of {filtered_total} articles")
-        st.caption(f"Debug: render loop completed = {rendered_count} cards")
 
 else:
     render_validation_tab(DB_PATH)
