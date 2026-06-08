@@ -7,6 +7,7 @@ update_all.py — one-command update pipeline.
 
 可選：
     python3 pipeline/update_all.py --mock          # mock AI + mock prices
+    python3 pipeline/update_all.py --mock-analysis # rule-based AI + real prices
     python3 pipeline/update_all.py --limit 20      # 最多分析 20 篇待分析文章
     python3 pipeline/update_all.py --days 90       # 價格驗證往回 90 天
 
@@ -159,6 +160,7 @@ def analyze_pending_articles(conn, mock: bool = False, limit: Optional[int] = No
         except EnvironmentError as e:
             msg = f"初始化 AI analyzer 失敗: {e}"
             print(msg)
+            print("提示：可改用 `python3 pipeline/update_all.py --mock-analysis` 執行 rule-based 分析。")
             failures.append(msg)
             return {"analyzed": 0, "failed": len(rows), "skipped": skipped, "failures": failures}
 
@@ -250,6 +252,7 @@ def update_price_validation(conn, mock: bool = False, days: int = 30) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="抓新聞 → AI 分析 → Price Validation")
     parser.add_argument("--mock", action="store_true", help="使用 mock AI 與 mock prices")
+    parser.add_argument("--mock-analysis", action="store_true", help="AI 分析階段使用 rule-based analyzer，不呼叫 Claude")
     parser.add_argument("--limit", type=int, default=None, help="最多分析幾篇待分析文章")
     parser.add_argument("--days", type=int, default=30, help="價格驗證往回幾天文章")
     args = parser.parse_args()
@@ -273,7 +276,8 @@ def main() -> None:
             errors.append(msg)
 
         try:
-            analysis_summary = analyze_pending_articles(conn, mock=args.mock, limit=args.limit)
+            use_mock_analysis = args.mock or args.mock_analysis
+            analysis_summary = analyze_pending_articles(conn, mock=use_mock_analysis, limit=args.limit)
             errors.extend(analysis_summary.get("failures", []))
         except Exception as e:
             msg = f"AI 分析階段失敗: {e}"
@@ -294,7 +298,7 @@ def main() -> None:
             record_pipeline_run(
                 conn,
                 ran_at=started,
-                mode="mock" if args.mock else "real",
+                mode="mock" if args.mock else ("mock-analysis" if args.mock_analysis else "real"),
                 crawled_total=int(crawl_summary.get("crawled_total", 0)),
                 inserted=int(crawl_summary.get("inserted", 0)),
                 skipped=int(crawl_summary.get("skipped", 0)),

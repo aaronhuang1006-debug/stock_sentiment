@@ -1,8 +1,9 @@
 """
-mock_sentiment.py — 不呼叫 Claude API 的模擬情緒分析器
+mock_sentiment.py — Rule-Based Analyzer（不呼叫 Claude API）
 
-依照標題與內容做關鍵字比對，產生符合 impact_score_guideline.md 四維度格式的結果。
-僅供 Demo / 測試使用，結果不代表真實市場判斷。
+依照標題與內容做財經關鍵字比對，產生 sentiment / impact_score /
+reason / keywords。適用於 ANTHROPIC_API_KEY 沒額度、Demo，或離線測試。
+結果是規則式近似判斷，不代表真實市場建議。
 """
 
 import re
@@ -32,19 +33,22 @@ _KW_PATTERNS: list[tuple[str, str]] = [
     (r"PCB|電路板",    "PCB電路板"),
     (r"散熱|熱管",     "散熱模組"),
     (r"伺服器|server", "伺服器"),
+    (r"AI.*伺服器|伺服器.*AI", "AI伺服器"),
     (r"資料中心|data center", "資料中心"),
     (r"網通|交換器",   "網通設備"),
     (r"光模組|光纖",   "光模組"),
     # 事件 / 財務
     (r"法說會",        "法說會"),
     (r"營收",          "營收表現"),
+    (r"營收年減",      "營收年減"),
     (r"獲利|EPS|每股盈餘", "獲利展望"),
     (r"下修|下調",     "獲利下修"),
-    (r"上調|調升",     "評等調升"),
+    (r"上修|上調|調升", "評等調升"),
     (r"庫存",          "庫存調整"),
     (r"漲價|提價",     "漲價題材"),
     (r"降價|砍價",     "價格壓力"),
     (r"訂單",          "訂單能見度"),
+    (r"接單",          "接單動能"),
     (r"擴產|增產",     "產能擴充"),
     (r"裁員|減班",     "人力縮編"),
     (r"併購|收購",     "併購題材"),
@@ -64,6 +68,8 @@ _KW_PATTERNS: list[tuple[str, str]] = [
     (r"Fed|聯準會|升息|降息", "Fed政策"),
     (r"美中貿易|關稅",  "貿易關稅"),
     (r"外資|QFII",     "外資動向"),
+    (r"外資.*買超|買超", "外資買超"),
+    (r"外資.*賣超|賣超", "外資賣超"),
 ]
 
 # Fallback 詞庫（依情緒）
@@ -104,11 +110,16 @@ _POSITIVE_WORDS = [
     "獲利", "成長", "突破", "得標", "合約", "上調", "買進", "超越", "創高",
     "利多", "受惠", "訂單", "擴產", "轉盈", "調升", "大增", "新高", "強勁",
     "創紀錄", "優於預期", "大幅成長", "大客戶", "量產", "重大合作",
+    "買超", "接單", "上修", "法說樂觀", "需求強勁",
 ]
 _NEGATIVE_WORDS = [
     "虧損", "衰退", "下調", "賣出", "裁員", "訴訟", "中斷", "召回", "警示",
     "利空", "下修", "虧", "跌", "減少", "停產", "停工", "違約", "罰款",
     "低於預期", "大幅衰退", "重大損失", "轉虧",
+    "砍單", "賣超", "庫存過高", "毛利下滑", "營收年減",
+]
+_NEUTRAL_WORDS = [
+    "公告", "法說會", "股東會", "除權息", "營收公布", "董事會", "例行訊息",
 ]
 
 # ── 規模關鍵字 ────────────────────────────────────────────────
@@ -123,6 +134,13 @@ _MID_CAP_SIGNALS = ["億元", "百億", "十億"]
 # ── 確定性關鍵字 ──────────────────────────────────────────────
 _HIGH_CERTAINTY = ["已簽約", "正式合約", "量產", "實際出貨", "宣布", "公告"]
 _LOW_CERTAINTY  = ["傳出", "據悉", "消息指出", "備忘錄", "MOU", "規劃", "洽談中"]
+_HIGH_IMPACT_WORDS = [
+    "財報", "營收", "獲利", "法說會", "外資", "AI", "半導體", "台積電",
+    "輝達", "記憶體", "伺服器",
+]
+_LOW_IMPACT_WORDS = [
+    "例行公告", "日期", "股東會", "除息", "除權息", "董事會", "一般行政資訊",
+]
 
 
 def _count_matches(text: str, keywords: list[str]) -> int:
@@ -136,18 +154,21 @@ def mock_analyze(
     keywords_only: bool = False,
 ) -> SentimentResult:
     """
-    以關鍵字規則產生模擬分析結果，reason 格式符合四維度說明。
+    以關鍵字規則產生 rule-based 分析結果。
     """
     full_text = title + " " + (content or "")[:800]
 
     # ── 1. 情緒判斷 ────────────────────────────────────────────
     pos = _count_matches(full_text, _POSITIVE_WORDS)
     neg = _count_matches(full_text, _NEGATIVE_WORDS)
+    neu = _count_matches(full_text, _NEUTRAL_WORDS)
 
-    if pos > neg:
+    if pos > neg and pos > 0:
         sentiment = "正面"
-    elif neg > pos:
+    elif neg > pos and neg > 0:
         sentiment = "負面"
+    elif neu > 0:
+        sentiment = "中立"
     else:
         sentiment = "中立"
 
@@ -202,8 +223,14 @@ def mock_analyze(
         index_note  = "影響侷限於個股，指數連動性低"
 
     # ── 3. 加總計算 impact_score（1–10）─────────────────────────
+    high_impact_hits = _count_matches(full_text, _HIGH_IMPACT_WORDS)
+    low_impact_hits = _count_matches(full_text, _LOW_IMPACT_WORDS)
     raw = scale_score + profit_score + market_score + index_score  # 4–10
-    impact_score = float(max(1, min(10, raw)))
+    raw += min(high_impact_hits, 3) * 0.4
+    raw -= min(low_impact_hits, 3) * 0.5
+    if sentiment in {"正面", "負面"}:
+        raw += min(max(pos, neg), 3) * 0.2
+    impact_score = round(float(max(1, min(10, raw))), 1)
 
     # ── 4. 找出主要加分原因 ────────────────────────────────────
     dim_scores = {
@@ -215,16 +242,29 @@ def mock_analyze(
     top_dims = [k for k, v in dim_scores.items() if v == max(dim_scores.values())]
     top_label = "、".join(top_dims)
 
-    reason = (
-        f"公司規模：{scale_note}；"
-        f"獲利影響：{profit_note}；"
-        f"市場影響：{market_note}；"
-        f"指數影響：{index_note}。"
-        f"【主要加分原因：{top_label}】"
-    )
-
     # ── 5. 抽取市場關鍵字 ──────────────────────────────────────
     keywords = _extract_keywords(full_text, sentiment)
+
+    sentiment_label = {"正面": "Positive", "負面": "Negative", "中立": "Neutral"}[sentiment]
+    signal_note = {
+        "正面": "文章包含正面財務或需求訊號",
+        "負面": "文章包含負面營運或市場壓力訊號",
+        "中立": "文章偏例行公告或資訊揭露，缺乏明確多空方向",
+    }[sentiment]
+    impact_note = (
+        "關鍵字包含高影響族群或事件，可能影響市場預期"
+        if high_impact_hits
+        else "未出現明顯高影響族群或重大事件關鍵字"
+    )
+    keyword_note = "、".join(keywords[:3]) if keywords else "無明確關鍵字"
+    reason = (
+        "AI Analysis:\n"
+        f"- {signal_note}\n"
+        f"- 關鍵字包含 {keyword_note}\n"
+        f"- {impact_note}\n"
+        f"- 四維度主要加分原因：{top_label}；{scale_note}；{profit_note}\n"
+        f"- 因此判定為 {sentiment_label}，impact score 為 {impact_score:.1f}"
+    )
 
     return SentimentResult(
         sentiment=sentiment,
