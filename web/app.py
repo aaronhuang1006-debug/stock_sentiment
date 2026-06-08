@@ -7,8 +7,10 @@ app.py — 台股新聞 AI 分析平台（Streamlit）
 """
 
 import json
+import re
 import sqlite3
 import sys
+from html import escape
 from pathlib import Path
 
 import altair as alt
@@ -79,6 +81,30 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
                   margin-bottom: .6rem; }
 .hero-reason    { font-size: .83rem; color: #3d4460; line-height: 1.6;
                   border-top: 1px solid #d1daf5; padding-top: .6rem; margin-top: .1rem; }
+.reason-box {
+    background: #f8fafc;
+    border: 1px solid #dbe4f0;
+    border-left: 3px solid #7c8eb8;
+    border-radius: 6px;
+    padding: .65rem .8rem;
+    margin: .55rem 0;
+}
+.reason-title {
+    font-size: .68rem;
+    font-weight: 800;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    margin-bottom: .35rem;
+}
+.reason-list {
+    margin: 0;
+    padding-left: 1rem;
+    color: #334155;
+    font-size: .8rem;
+    line-height: 1.55;
+}
+.reason-list li { margin-bottom: .2rem; }
 
 /* ── Metric 卡片 ── */
 .mc {
@@ -582,6 +608,91 @@ def fmt_time(val) -> str:
     except Exception:
         return str(val)
 
+def format_reason(reason: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(reason or "")).strip()
+    if not cleaned:
+        bullets = ["No analysis reason available"]
+    else:
+        raw_parts = re.split(
+            r"(?:[。；;]|，|,|\b(?:because|due to|as)\b)",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        parts = [p.strip(" ：:-") for p in raw_parts if p and p.strip(" ：:-")]
+        if len(parts) <= 1 and len(cleaned) > 90:
+            parts = [cleaned[i:i + 90] for i in range(0, len(cleaned), 90)]
+
+        bullets = []
+        for part in parts:
+            item = part.strip()
+            if not item:
+                continue
+            if len(item) > 90:
+                item = item[:90].rstrip() + "..."
+            bullets.append(item)
+            if len(bullets) >= 5:
+                break
+        if not bullets:
+            bullets = ["No analysis reason available"]
+
+    bullet_html = "".join(f"<li>{escape(item)}</li>" for item in bullets)
+    return (
+        '<div class="reason-box">'
+        '<div class="reason-title">AI Analysis</div>'
+        f'<ul class="reason-list">{bullet_html}</ul>'
+        '</div>'
+    )
+
+def render_performance_metrics(perf: dict, title: str) -> None:
+    st.markdown(f"**{title}**")
+    if perf:
+        perf_cols = st.columns(3)
+        perf_cols[0].metric("Avg T+1", fmt_pct(perf.get("return_1d")))
+        perf_cols[1].metric("Avg T+3", fmt_pct(perf.get("return_3d")))
+        perf_cols[2].metric("Avg T+5", fmt_pct(perf.get("return_5d")))
+    else:
+        st.caption("Insufficient validation data")
+
+def render_related_news(related: "pd.DataFrame", key_prefix: str, limit: int = 8) -> None:
+    st.markdown("**Related News**")
+    if related.empty:
+        st.caption("No related news")
+        return
+
+    display_related = related.head(limit)
+    if len(related) > len(display_related):
+        st.caption(f"顯示前 {len(display_related)} / {len(related)} 篇，依影響力與時間排序")
+
+    for news_idx, (_, article) in enumerate(display_related.iterrows(), 1):
+        score = (
+            f"{float(article['impact_score']):.1f}/10"
+            if pd.notna(article.get("impact_score")) else "—"
+        )
+        news_title = str(article.get("title") or "Untitled")
+        news_expander_title = f"{news_idx}. {news_title[:64]}{'…' if len(news_title) > 64 else ''}"
+        with st.expander(news_expander_title):
+            article_url = str(article.get("url") or "").strip()
+            if article_url:
+                st.markdown(f"**[{news_title}]({article_url})**")
+            else:
+                st.markdown(f"**{news_title}**")
+
+            meta_cols = st.columns(4)
+            meta_cols[0].caption(
+                f"Source: {SOURCE_META.get(article.get('source'), {}).get('label', article.get('source', '—'))}"
+            )
+            meta_cols[1].caption(f"Time: {fmt_time(article.get('published_at'))}")
+            meta_cols[2].caption(f"Sentiment: {article.get('sentiment', '—')}")
+            meta_cols[3].caption(f"Impact: {score}")
+            st.markdown(format_reason(str(article.get("reason") or "")), unsafe_allow_html=True)
+
+            if article_url:
+                st.link_button(
+                    "查看原文",
+                    article_url,
+                    key=f"{key_prefix}_news_{article.get('id')}_{news_idx}",
+                )
+
 def _build_insight(today_cnt: int, avg_score: float, pos_pct: float, neg_pct: float,
                    src_counts: "pd.Series", analyzed: int) -> str:
     avg_str = f"{avg_score:.1f}" if not pd.isna(avg_score) else "—"
@@ -872,53 +983,8 @@ if page == "Dashboard":
                     sum_cols[1].metric("平均影響力", f"{r.avg_impact:.1f}/10")
                     sum_cols[2].metric("驅動力", f"{r.driver_score:.0f}")
 
-                    st.markdown("**Driver Performance**")
-                    if perf:
-                        perf_cols = st.columns(3)
-                        perf_cols[0].metric("Avg T+1", fmt_pct(perf.get("return_1d")))
-                        perf_cols[1].metric("Avg T+3", fmt_pct(perf.get("return_3d")))
-                        perf_cols[2].metric("Avg T+5", fmt_pct(perf.get("return_5d")))
-                    else:
-                        st.caption("Insufficient validation data")
-
-                    st.markdown("**Related News**")
-                    if related.empty:
-                        st.caption("No related news")
-                    else:
-                        display_related = related.head(12)
-                        if len(related) > len(display_related):
-                            st.caption(f"顯示前 {len(display_related)} / {len(related)} 篇，依影響力與時間排序")
-                        for news_idx, (_, article) in enumerate(display_related.iterrows(), 1):
-                            score = (
-                                f"{float(article['impact_score']):.1f}/10"
-                                if pd.notna(article.get("impact_score")) else "—"
-                            )
-                            news_title = str(article.get("title") or "Untitled")
-                            news_expander_title = f"{news_idx}. {news_title[:64]}{'…' if len(news_title) > 64 else ''}"
-                            with st.expander(news_expander_title):
-                                article_url = str(article.get("url") or "").strip()
-                                if article_url:
-                                    st.markdown(f"**[{news_title}]({article_url})**")
-                                else:
-                                    st.markdown(f"**{news_title}**")
-
-                                meta_cols = st.columns(4)
-                                meta_cols[0].caption(f"Source: {SOURCE_META.get(article.get('source'), {}).get('label', article.get('source', '—'))}")
-                                meta_cols[1].caption(f"Time: {fmt_time(article.get('published_at'))}")
-                                meta_cols[2].caption(f"Sentiment: {article.get('sentiment', '—')}")
-                                meta_cols[3].caption(f"Impact: {score}")
-
-                                reason_text = str(article.get("reason") or "").strip()
-                                if reason_text:
-                                    reason_short = reason_text[:150] + ("…" if len(reason_text) > 150 else "")
-                                    st.markdown(f"**AI Analysis:**  \n{reason_short}")
-
-                                if article_url:
-                                    st.link_button(
-                                        "查看原文",
-                                        article_url,
-                                        key=f"driver_{idx}_news_{article.get('id')}_{news_idx}",
-                                    )
+                    render_performance_metrics(perf, "Driver Performance")
+                    render_related_news(related, key_prefix=f"driver_{idx}", limit=8)
 
         with md_right:
             # Keyword Frequency 橫條圖（top 12）
@@ -980,10 +1046,29 @@ if page == "Dashboard":
                 f'impact ≥ 7 的文章共 {len(high_kw_df)} 篇</span></div>',
                 unsafe_allow_html=True,
             )
-            chips_html = '<div class="kw-row">' + "".join(
-                kw_chip(w, c) for w, c in hi_counter.most_common(20)
-            ) + "</div>"
-            st.markdown(chips_html, unsafe_allow_html=True)
+            for idx, (keyword, count) in enumerate(hi_counter.most_common(20), 1):
+                related = related_articles_for_driver(high_kw_df, keyword)
+                avg_impact = related["impact_score"].dropna().mean() if not related.empty else float("nan")
+                keyword_score = count * avg_impact if not pd.isna(avg_impact) else 0
+                perf = driver_performance(related, validation_returns)
+                expander_title = (
+                    f"{idx}. {keyword} · 出現 {count} 次 · "
+                    f"avg {avg_impact:.1f}/10 · score {keyword_score:.0f}"
+                    if not pd.isna(avg_impact)
+                    else f"{idx}. {keyword} · 出現 {count} 次"
+                )
+                with st.expander(expander_title):
+                    st.markdown("**Summary**")
+                    sum_cols = st.columns(3)
+                    sum_cols[0].metric("出現次數", f"{count}")
+                    sum_cols[1].metric(
+                        "平均影響力",
+                        f"{avg_impact:.1f}/10" if not pd.isna(avg_impact) else "—",
+                    )
+                    sum_cols[2].metric("Keyword Score", f"{keyword_score:.0f}")
+
+                    render_performance_metrics(perf, "Keyword Performance")
+                    render_related_news(related, key_prefix=f"high_kw_{idx}", limit=6)
             st.markdown("")
 
     st.divider()
@@ -1118,7 +1203,7 @@ if page == "Dashboard":
 
             if pd.notna(row["reason"]) and row["reason"]:
                 with st.expander("分析理由"):
-                    st.markdown(row["reason"])
+                    st.markdown(format_reason(str(row["reason"])), unsafe_allow_html=True)
 
 else:
     render_validation_tab(DB_PATH)
