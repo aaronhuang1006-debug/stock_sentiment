@@ -920,14 +920,27 @@ with st.sidebar:
     st.divider()
 
     st.markdown('<div class="sb-title">篩選條件</div>', unsafe_allow_html=True)
-    keyword           = st.text_input("", placeholder="搜尋標題…", label_visibility="collapsed")
-    selected_sentiment = st.selectbox("情緒", ["全部", "正面", "負面", "中立", "尚未分析"])
+
+    # ── 重置篩選預設值（透過 session_state）────────────────────
+    if st.button("重置篩選", use_container_width=True, key="btn_reset_filters"):
+        for _k in ("filter_keyword", "filter_sentiment", "filter_source",
+                   "filter_sort", "filter_count"):
+            if _k in st.session_state:
+                del st.session_state[_k]
+        st.rerun()
+
+    keyword           = st.text_input("", placeholder="搜尋標題…",
+                                      label_visibility="collapsed", key="filter_keyword")
+    selected_sentiment = st.selectbox("情緒",
+                                      ["全部", "正面", "負面", "中立", "尚未分析"],
+                                      key="filter_sentiment")
     source_opts        = ["全部來源"] + sorted(df_all["source"].unique().tolist())
-    selected_source    = st.selectbox("來源", source_opts)
-    sort_by_score      = st.toggle("依影響力排序", value=False)
-    news_count_option  = st.selectbox("顯示新聞數量", ["10", "20", "50", "All"], index=1)
+    selected_source    = st.selectbox("來源", source_opts, key="filter_source")
+    sort_by_score      = st.toggle("依影響力排序", value=False, key="filter_sort")
+    news_count_option  = st.selectbox("顯示新聞數量", ["10", "20", "50", "All"],
+                                      index=1, key="filter_count")
     st.divider()
-    if st.button("重新整理", use_container_width=True):
+    if st.button("重新整理", use_container_width=True, key="btn_refresh"):
         st.cache_data.clear()
         st.rerun()
 
@@ -1246,8 +1259,8 @@ if page == "Dashboard":
         st.markdown("""
 <div class="empty-state">
   <div class="empty-state-icon">🔍</div>
-  <div class="empty-state-title">沒有符合條件的文章</div>
-  <div class="empty-state-sub">請調整左側篩選條件後再試。</div>
+  <div class="empty-state-title">目前篩選條件沒有符合的新聞</div>
+  <div class="empty-state-sub">請調整搜尋關鍵字、情緒或來源篩選，或按左側「重置篩選」恢復預設。</div>
 </div>""", unsafe_allow_html=True)
     else:
         for idx, row in display_news_df.iterrows():

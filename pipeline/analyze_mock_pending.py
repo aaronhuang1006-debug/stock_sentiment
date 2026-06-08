@@ -55,6 +55,11 @@ def main() -> None:
     print(f"待分析 : {total} 篇")
     print(f"跳過已完整分析 : {skipped} 篇")
 
+    if total == 0:
+        print("\n✅ 沒有待分析文章，所有文章均已完成分析。")
+        conn.close()
+        return
+
     succeeded = failed = 0
     for i, row in enumerate(rows, 1):
         title = row["title"]

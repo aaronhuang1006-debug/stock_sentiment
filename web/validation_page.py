@@ -337,8 +337,8 @@ def render_validation_tab(db_path: Path) -> None:
 
     styled = (
         show_df.style
-        .applymap(_color_sentiment, subset=["情緒"])
-        .applymap(_color_return, subset=["T+1(%)", "T+3(%)", "T+5(%)"])
+        .map(_color_sentiment, subset=["情緒"])
+        .map(_color_return, subset=["T+1(%)", "T+3(%)", "T+5(%)"])
         .format({"Impact": "{:.1f}", "T+1(%)": "{:+.2f}", "T+3(%)": "{:+.2f}", "T+5(%)": "{:+.2f}"})
     )
     st.dataframe(styled, use_container_width=True, height=380)
