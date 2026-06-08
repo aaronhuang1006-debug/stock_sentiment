@@ -944,6 +944,48 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
+    # ── 資料更新 ──────────────────────────────────────────
+    st.divider()
+    st.markdown('<div class="sb-title">資料更新</div>', unsafe_allow_html=True)
+    st.caption(
+        "抓取最新財經新聞，並使用 Rule-Based Analyzer 補分析尚未分析文章。"
+        "完成後自動重新整理 Dashboard。"
+    )
+
+    # 顯示上一次更新的結果（在 rerun 後呈現）
+    _upd_result = st.session_state.pop("_update_result", None)
+    if _upd_result == "ok":
+        st.success("✅ 更新完成，資料已重新載入。")
+    elif _upd_result and _upd_result != "ok":
+        st.error(f"⚠️ 更新失敗：{_upd_result}")
+
+    if st.button("🔄 更新新聞", use_container_width=True, key="btn_update_news"):
+        _err_msg = None
+        with st.spinner("正在更新新聞與分析資料，請稍候…"):
+            try:
+                # 延遲 import，避免啟動時拖慢頁面載入
+                from pipeline.update_all import (          # noqa: PLC0415
+                    analyze_pending_articles as _analyze,
+                    crawl_all_sources        as _crawl,
+                    update_price_validation  as _price,
+                )
+                from models.db import (                    # noqa: PLC0415
+                    create_tables  as _create_tables,
+                    get_connection as _get_conn,
+                )
+                _conn = _get_conn(DB_PATH)
+                _create_tables(_conn)
+                _crawl(_conn)
+                _analyze(_conn, mock=True)
+                _price(_conn, mock=False, days=30)
+                _conn.close()
+            except Exception as _e:
+                _err_msg = str(_e)
+
+        st.session_state["_update_result"] = "ok" if _err_msg is None else _err_msg
+        st.cache_data.clear()
+        st.rerun()
+
     # ── Pipeline 執行狀態 ─────────────────────────────────
     st.markdown("")   # 小間距
     pipe = load_pipeline_status()
