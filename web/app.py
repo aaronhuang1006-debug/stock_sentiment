@@ -394,6 +394,39 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
     margin-left: 2px;
 }
 .kw-row { margin-top: .3rem; line-height: 1.8; }
+
+/* ── High Impact Keywords chip grid ── */
+.hi-kw-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: .45rem;
+    margin-top: .5rem;
+}
+.hi-kw-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: .5rem .75rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,.03);
+    transition: box-shadow .15s, border-color .15s;
+}
+.hi-kw-card:hover {
+    box-shadow: 0 3px 8px rgba(0,0,0,.08);
+    border-color: #c7d2e8;
+}
+.hi-kw-name {
+    font-size: .78rem;
+    font-weight: 600;
+    color: #1e293b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.hi-kw-meta {
+    font-size: .65rem;
+    color: #94a3b8;
+    margin-top: .15rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1101,29 +1134,19 @@ if page == "Dashboard":
                 f'impact ≥ 7 的文章共 {len(high_kw_df)} 篇</span></div>',
                 unsafe_allow_html=True,
             )
-            for idx, (keyword, count) in enumerate(hi_counter.most_common(20), 1):
+            chips_html = '<div class="hi-kw-grid">'
+            for keyword, count in hi_counter.most_common(20):
                 related = related_articles_for_driver(high_kw_df, keyword)
                 avg_impact = related["impact_score"].dropna().mean() if not related.empty else float("nan")
-                keyword_score = count * avg_impact if not pd.isna(avg_impact) else 0
-                perf = driver_performance(related, validation_returns)
-                expander_title = (
-                    f"{idx}. {keyword} · 出現 {count} 次 · "
-                    f"avg {avg_impact:.1f}/10 · score {keyword_score:.0f}"
-                    if not pd.isna(avg_impact)
-                    else f"{idx}. {keyword} · 出現 {count} 次"
+                avg_str = f"avg {avg_impact:.1f}/10" if not pd.isna(avg_impact) else "—"
+                chips_html += (
+                    f'<div class="hi-kw-card">'
+                    f'<div class="hi-kw-name">{keyword}</div>'
+                    f'<div class="hi-kw-meta">出現 {count} 次 · {avg_str}</div>'
+                    f'</div>'
                 )
-                with st.expander(expander_title):
-                    st.markdown("**Summary**")
-                    sum_cols = st.columns(3)
-                    sum_cols[0].metric("出現次數", f"{count}")
-                    sum_cols[1].metric(
-                        "平均影響力",
-                        f"{avg_impact:.1f}/10" if not pd.isna(avg_impact) else "—",
-                    )
-                    sum_cols[2].metric("Keyword Score", f"{keyword_score:.0f}")
-
-                    render_performance_metrics(perf, "Keyword Performance")
-                    render_related_news(related, key_prefix=f"high_kw_{idx}", limit=5)
+            chips_html += '</div>'
+            st.markdown(chips_html, unsafe_allow_html=True)
             st.markdown("")
 
     st.divider()
@@ -1228,6 +1251,10 @@ if page == "Dashboard":
 </div>""", unsafe_allow_html=True)
     else:
         for idx, row in display_news_df.iterrows():
+            is_unanalyzed = pd.isna(row["sentiment"])
+            article_id = row["id"] if "id" in row.index and pd.notna(row["id"]) else idx
+            article_url = str(row.get("url") or "").strip()
+            title_text = str(row.get("title") or "Untitled")
             pub_time = (
                 row["published_at"].strftime("%Y-%m-%d %H:%M")
                 if pd.notna(row["published_at"]) else "—"
@@ -1236,16 +1263,6 @@ if page == "Dashboard":
                 f'<span class="nstock">{row["stock_codes_str"]}</span>'
                 if row["stock_codes_str"] else ""
             )
-            is_unanalyzed = pd.isna(row["sentiment"])
-            article_id = row["id"] if "id" in row.index and pd.notna(row["id"]) else idx
-            article_url = str(row.get("url") or "").strip()
-            title_text = str(row.get("title") or "Untitled")
-            title_html = (
-                f'<a href="{escape(article_url)}" target="_blank">{escape(title_text)}</a>'
-                if article_url else escape(title_text)
-            )
-
-            # keywords chips（已分析且有 keywords 才顯示）
             kws = row.get("keywords_list", []) if "keywords_list" in row.index else []
             kw_row_html = ""
             if isinstance(kws, list) and kws and not is_unanalyzed:
@@ -1254,34 +1271,36 @@ if page == "Dashboard":
                     + "".join(f'<span class="kw-chip">{kw}</span>' for kw in kws[:5])
                     + "</div>"
                 )
+            hi_badge_html = high_impact_badge(row["impact_score"])
+            title_html = (
+                f'<a href="{escape(article_url)}" target="_blank">{escape(title_text)}</a>'
+                if article_url else escape(title_text)
+            )
 
-            hi_badge_html = high_impact_badge(row['impact_score'])
-            st.markdown(f"""
-<div class="{news_card_class(row)}">
-  <div class="nttl">{title_html}</div>
-  <div class="news-card-badges">
-    {src_badge(row['source'])}
-    <span class="ntime">{pub_time}</span>
-    {senti_chip(row['sentiment'])}
-    {score_pill(row['impact_score'])}
-    {hi_badge_html}
-    {stock_tag}
-  </div>
-  {kw_row_html}
-</div>""", unsafe_allow_html=True)
-
-            toggle_label = "AI Analysis · Pending analysis" if is_unanalyzed else "AI Analysis"
-            if st.toggle(
-                toggle_label,
-                value=False,
-                key=f"news_analysis_{article_id}",
-            ):
-                if is_unanalyzed:
-                    st.markdown(format_pending_analysis(), unsafe_allow_html=True)
-                elif pd.notna(row["reason"]) and row["reason"]:
-                    st.markdown(format_reason(str(row["reason"])), unsafe_allow_html=True)
-                else:
-                    st.markdown(format_reason(""), unsafe_allow_html=True)
+            with st.container():
+                st.markdown(
+                    f'<div class="{news_card_class(row)}">'
+                    f'<div class="nttl">{title_html}</div>'
+                    f'<div class="news-card-badges">'
+                    f'{src_badge(row["source"])}'
+                    f'<span class="ntime">{pub_time}</span>'
+                    f'{senti_chip(row["sentiment"])}'
+                    f'{score_pill(row["impact_score"])}'
+                    f'{hi_badge_html}'
+                    f'{stock_tag}'
+                    f'</div>'
+                    f'{kw_row_html}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                toggle_label = "AI Analysis · Pending analysis" if is_unanalyzed else "AI Analysis"
+                if st.toggle(toggle_label, value=False, key=f"news_analysis_{article_id}"):
+                    if is_unanalyzed:
+                        st.markdown(format_pending_analysis(), unsafe_allow_html=True)
+                    elif pd.notna(row["reason"]) and row["reason"]:
+                        st.markdown(format_reason(str(row["reason"])), unsafe_allow_html=True)
+                    else:
+                        st.markdown(format_reason(""), unsafe_allow_html=True)
 
         st.caption(f"Showing {len(display_news_df)} of {filtered_total} articles")
 
