@@ -132,7 +132,11 @@ def _fetch_pending_analysis_rows(conn, limit: Optional[int] = None) -> list:
     sql = """
         SELECT *
         FROM articles
-        WHERE sentiment IS NULL OR impact_score IS NULL
+        WHERE sentiment IS NULL
+           OR impact_score IS NULL
+           OR relevance_score IS NULL
+           OR affected_stocks IS NULL
+           OR affected_stocks = '[]'
         ORDER BY published_at DESC
     """
     params: tuple = ()
@@ -156,7 +160,14 @@ def analyze_pending_articles(
     total_articles = _count(conn, "SELECT COUNT(*) FROM articles")
     pending_total = _count(
         conn,
-        "SELECT COUNT(*) FROM articles WHERE sentiment IS NULL OR impact_score IS NULL",
+        """
+        SELECT COUNT(*) FROM articles
+        WHERE sentiment IS NULL
+           OR impact_score IS NULL
+           OR relevance_score IS NULL
+           OR affected_stocks IS NULL
+           OR affected_stocks = '[]'
+        """,
     )
     rows = _fetch_pending_analysis_rows(conn, limit=limit)
     skipped = max(total_articles - pending_total, 0)
@@ -202,6 +213,10 @@ def analyze_pending_articles(
                         content=content,
                         stock_codes=stock_codes,
                     )
+                    metadata = mock_analyze(title=title, content=content, stock_codes=stock_codes)
+                    result.relevance_score = getattr(metadata, "relevance_score", None)
+                    result.affected_stocks = getattr(metadata, "affected_stocks", [])
+                    result.analysis_method = "hybrid"
                 except Exception as e:
                     print(f"         → Claude unavailable, fallback to Rule-Based Analyzer. ({e})")
                     fallback_count += 1
@@ -209,13 +224,26 @@ def analyze_pending_articles(
             else:
                 result = mock_analyze(title=title, content=content, stock_codes=stock_codes)
 
+            try:
+                existing_keywords = json.loads(row["keywords"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                existing_keywords = []
+            existing_method = row["analysis_method"] if "analysis_method" in row.keys() else None
+            analysis_method = existing_method or getattr(
+                result,
+                "analysis_method",
+                "hybrid" if use_claude else "rule_based",
+            )
             update_sentiment(
                 conn,
                 article_id=row["id"],
-                sentiment=result.sentiment,
-                impact_score=result.impact_score,
-                reason=result.reason,
-                keywords=result.keywords,
+                sentiment=row["sentiment"] or result.sentiment,
+                impact_score=row["impact_score"] if row["impact_score"] is not None else result.impact_score,
+                reason=row["reason"] or result.reason,
+                keywords=existing_keywords if existing_keywords else result.keywords,
+                relevance_score=getattr(result, "relevance_score", None),
+                affected_stocks=getattr(result, "affected_stocks", None),
+                analysis_method=analysis_method,
             )
             print(f"         → {result.sentiment} {result.impact_score:.0f}/10")
             succeeded += 1
