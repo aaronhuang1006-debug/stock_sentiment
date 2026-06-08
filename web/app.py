@@ -479,21 +479,15 @@ def load_pipeline_status() -> dict:
         return {}
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    # 確保 pipeline_runs 表存在（舊 DB 可能沒有）
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS pipeline_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ran_at TEXT NOT NULL, mode TEXT NOT NULL,
-            crawled_total INTEGER DEFAULT 0, inserted INTEGER DEFAULT 0,
-            skipped INTEGER DEFAULT 0, analyzed INTEGER DEFAULT 0,
-            analysis_failed INTEGER DEFAULT 0, duration_sec REAL DEFAULT 0,
-            error TEXT
-        )
-    """)
-    row   = conn.execute(
+    # 確保所有表都存在（含 articles / pipeline_runs）
+    create_tables(conn)
+    row = conn.execute(
         "SELECT * FROM pipeline_runs ORDER BY ran_at DESC LIMIT 1"
     ).fetchone()
-    total = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+    except Exception:
+        total = 0
     conn.close()
     if row is None:
         return {"db_total": total}
@@ -870,28 +864,20 @@ def t5_card_css(val) -> str:
 # 載入資料 & 統計
 # ─────────────────────────────────────────────────────────────
 
+# ── 確保 DB 檔案與所有 tables 存在（空 DB 時建立，不影響有資料的 DB）──
+try:
+    _pre_conn = sqlite3.connect(DB_PATH)
+    create_tables(_pre_conn)
+    _pre_conn.close()
+except Exception:
+    pass
+
+_load_error: str = ""
 try:
     df_all = load_articles()
 except Exception as _e:
-    st.markdown(f"""
-<div class="error-state">
-  <div class="error-state-title">無法載入資料庫</div>
-  <div class="error-state-sub">{_e}</div>
-  <div class="error-state-sub" style="margin-top:.5rem">請確認 <code>data/news.db</code> 存在且未損毀。</div>
-</div>""", unsafe_allow_html=True)
-    st.stop()
-
-if df_all.empty:
-    st.markdown("""
-<div class="empty-state">
-  <div class="empty-state-icon">📭</div>
-  <div class="empty-state-title">尚無新聞資料</div>
-  <div class="empty-state-sub">請先執行爬蟲將文章存入資料庫：</div>
-  <div class="empty-state-sub" style="margin-top:.4rem;font-family:monospace;color:#374151">
-    python3 pipeline/save_cnyes_to_db.py
-  </div>
-</div>""", unsafe_allow_html=True)
-    st.stop()
+    df_all = pd.DataFrame()
+    _load_error = str(_e)
 
 total     = len(df_all)
 analyzed  = int(df_all["sentiment"].notna().sum())
@@ -1099,6 +1085,20 @@ if page == "Dashboard":
   <div class="hdr-sub">整合鉅亨網 · Yahoo 股市，以 Rule-Based Financial Analyzer 分析情緒與市場影響力</div>
   <div class="hdr-time">最後更新：{now_str}</div>
 </div>""", unsafe_allow_html=True)
+
+    # ── DB 錯誤 / 空狀態（sidebar 已渲染，按鈕可用）─────────────
+    if _load_error:
+        st.error(f"⚠️ 無法載入資料庫：{_load_error}")
+        st.info("若資料庫損毀，可刪除 `data/news.db` 後按「🔄 更新新聞」重建。")
+        st.stop()
+
+    if df_all.empty:
+        st.info(
+            "🗄️ 資料庫尚未建立或目前沒有新聞。\n\n"
+            "請按左側 **🔄 更新新聞** 抓取資料，完成後頁面會自動刷新。",
+            icon="📭",
+        )
+        st.stop()
 
     # ── Hero 卡片 ──────────────────────────────────────────────
 
