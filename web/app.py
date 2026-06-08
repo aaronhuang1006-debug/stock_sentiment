@@ -643,6 +643,14 @@ def format_reason(reason: str) -> str:
         '</div>'
     )
 
+def format_pending_analysis() -> str:
+    return (
+        '<div class="reason-box">'
+        '<div class="reason-title">AI Analysis</div>'
+        '<ul class="reason-list"><li>Pending analysis</li></ul>'
+        '</div>'
+    )
+
 def render_performance_metrics(perf: dict, title: str) -> None:
     st.markdown(f"**{title}**")
     if perf:
@@ -669,29 +677,38 @@ def render_related_news(related: "pd.DataFrame", key_prefix: str, limit: int = 8
             if pd.notna(article.get("impact_score")) else "—"
         )
         news_title = str(article.get("title") or "Untitled")
-        news_expander_title = f"{news_idx}. {news_title[:64]}{'…' if len(news_title) > 64 else ''}"
-        with st.expander(news_expander_title):
-            article_url = str(article.get("url") or "").strip()
-            if article_url:
-                st.markdown(f"**[{news_title}]({article_url})**")
-            else:
-                st.markdown(f"**{news_title}**")
+        article_url = str(article.get("url") or "").strip()
+        title_html = (
+            f'<a href="{escape(article_url)}" target="_blank">{escape(news_title)}</a>'
+            if article_url else escape(news_title)
+        )
+        source_label = SOURCE_META.get(article.get("source"), {}).get(
+            "label", article.get("source", "—")
+        )
+        st.markdown(f"""
+<div class="ncard">
+  <div class="nmeta">
+    <span class="badge b-unknown">{escape(str(source_label))}</span>
+    {senti_chip(article.get('sentiment'))}
+    {score_pill(article.get('impact_score'))}
+    <span class="ntime">{fmt_time(article.get('published_at'))}</span>
+  </div>
+  <div class="nttl">{news_idx}. {title_html}</div>
+</div>""", unsafe_allow_html=True)
 
-            meta_cols = st.columns(4)
-            meta_cols[0].caption(
-                f"Source: {SOURCE_META.get(article.get('source'), {}).get('label', article.get('source', '—'))}"
-            )
-            meta_cols[1].caption(f"Time: {fmt_time(article.get('published_at'))}")
-            meta_cols[2].caption(f"Sentiment: {article.get('sentiment', '—')}")
-            meta_cols[3].caption(f"Impact: {score}")
+        if st.toggle(
+            "AI Analysis",
+            value=False,
+            key=f"{key_prefix}_analysis_{article.get('id')}_{news_idx}",
+        ):
             st.markdown(format_reason(str(article.get("reason") or "")), unsafe_allow_html=True)
 
-            if article_url:
-                st.link_button(
-                    "查看原文",
-                    article_url,
-                    key=f"{key_prefix}_news_{article.get('id')}_{news_idx}",
-                )
+        if article_url:
+            st.link_button(
+                "查看原文",
+                article_url,
+                key=f"{key_prefix}_news_{article.get('id')}_{news_idx}",
+            )
 
 def _build_insight(today_cnt: int, avg_score: float, pos_pct: float, neg_pct: float,
                    src_counts: "pd.Series", analyzed: int) -> str:
@@ -1137,28 +1154,28 @@ if page == "Dashboard":
             st.altair_chart(senti_pie, use_container_width=True)
 
     # ── 套用篩選 ──────────────────────────────────────────────
-    df = df_all.copy()
+    news_df = df_all.copy()
 
     if keyword:
-        df = df[df["title"].str.contains(keyword, case=False, na=False)]
+        news_df = news_df[news_df["title"].str.contains(keyword, case=False, na=False)]
     if selected_sentiment == "尚未分析":
-        df = df[df["sentiment"].isna()]
+        news_df = news_df[news_df["sentiment"].isna()]
     elif selected_sentiment != "全部":
-        df = df[df["sentiment"] == selected_sentiment]
+        news_df = news_df[news_df["sentiment"] == selected_sentiment]
     if selected_source != "全部來源":
-        df = df[df["source"] == selected_source]
+        news_df = news_df[news_df["source"] == selected_source]
     if sort_by_score:
-        df = df.sort_values("impact_score", ascending=False, na_position="last")
+        news_df = news_df.sort_values("impact_score", ascending=False, na_position="last")
 
     # ── 新聞列表 ──────────────────────────────────────────────
     st.markdown(
         f'<div class="sec-title">新聞列表'
         f'<span style="font-weight:400;text-transform:none;letter-spacing:0;color:#b0b5c3;margin-left:8px">'
-        f'顯示 {len(df)} / {total} 篇</span></div>',
+        f'顯示 {len(news_df)} / {total} 篇</span></div>',
         unsafe_allow_html=True,
     )
 
-    if df.empty:
+    if news_df.empty:
         st.markdown("""
 <div class="empty-state">
   <div class="empty-state-icon">🔍</div>
@@ -1166,7 +1183,7 @@ if page == "Dashboard":
   <div class="empty-state-sub">請調整左側篩選條件後再試。</div>
 </div>""", unsafe_allow_html=True)
     else:
-        for _, row in df.iterrows():
+        for _, row in news_df.iterrows():
             pub_time = (
                 row["published_at"].strftime("%Y-%m-%d %H:%M")
                 if pd.notna(row["published_at"]) else "—"
@@ -1201,9 +1218,14 @@ if page == "Dashboard":
   {kw_row_html}
 </div>""", unsafe_allow_html=True)
 
-            if pd.notna(row["reason"]) and row["reason"]:
-                with st.expander("分析理由"):
+            expander_label = "AI Analysis · Pending analysis" if is_unanalyzed else "AI Analysis"
+            with st.expander(expander_label):
+                if is_unanalyzed:
+                    st.markdown(format_pending_analysis(), unsafe_allow_html=True)
+                elif pd.notna(row["reason"]) and row["reason"]:
                     st.markdown(format_reason(str(row["reason"])), unsafe_allow_html=True)
+                else:
+                    st.markdown(format_reason(""), unsafe_allow_html=True)
 
 else:
     render_validation_tab(DB_PATH)
