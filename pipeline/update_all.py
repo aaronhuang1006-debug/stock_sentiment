@@ -6,14 +6,15 @@ update_all.py — one-command update pipeline.
     python3 pipeline/update_all.py
 
 可選：
-    python3 pipeline/update_all.py --mock          # mock AI + mock prices
-    python3 pipeline/update_all.py --mock-analysis # rule-based AI + real prices
+    python3 pipeline/update_all.py --use-claude    # optional Claude deep analysis
+    python3 pipeline/update_all.py --mock          # rule-based analysis + mock prices
+    python3 pipeline/update_all.py --mock-analysis # alias：rule-based analysis
     python3 pipeline/update_all.py --limit 20      # 最多分析 20 篇待分析文章
     python3 pipeline/update_all.py --days 90       # 價格驗證往回 90 天
 
 流程：
   1. 抓取所有新聞來源並寫入 DB
-  2. 分析 sentiment 或 impact_score 尚未完成的新聞
+  2. 使用 Rule-Based Financial Analyzer 補分析 pending articles
   3. 抓取 Price Validation 所需價格並計算報酬率
 
 不修改 DB schema，不修改 crawler，不修改 dashboard。
@@ -34,6 +35,13 @@ if hasattr(sys.stderr, "reconfigure"):
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
+
+# ── 載入 .env（本機開發；Cloud / CI 上靜默略過）──
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(ROOT / ".env")
+except ImportError:
+    pass
 
 from analysis.mock_sentiment import mock_analyze
 from analysis.sentiment import SentimentAnalyzer
@@ -134,8 +142,16 @@ def _fetch_pending_analysis_rows(conn, limit: Optional[int] = None) -> list:
     return conn.execute(sql, params).fetchall()
 
 
-def analyze_pending_articles(conn, mock: bool = False, limit: Optional[int] = None) -> dict:
+def analyze_pending_articles(
+    conn,
+    use_claude: bool = False,
+    limit: Optional[int] = None,
+    mock: Optional[bool] = None,
+) -> dict:
     _stage_header("階段 2 / 3：分析尚未分析新聞")
+
+    if mock is not None:
+        use_claude = not mock
 
     total_articles = _count(conn, "SELECT COUNT(*) FROM articles")
     pending_total = _count(
@@ -153,16 +169,20 @@ def analyze_pending_articles(conn, mock: bool = False, limit: Optional[int] = No
         return {"analyzed": 0, "failed": 0, "skipped": skipped, "failures": []}
 
     analyzer = None
+    analysis_mode = "Rule-Based"
     failures: list[str] = []
-    if not mock:
+    fallback_count = 0
+    if use_claude:
         try:
             analyzer = SentimentAnalyzer()
+            analysis_mode = "Claude"
         except EnvironmentError as e:
-            msg = f"初始化 AI analyzer 失敗: {e}"
-            print(msg)
-            print("提示：可改用 `python3 pipeline/update_all.py --mock-analysis` 執行 rule-based 分析。")
-            failures.append(msg)
-            return {"analyzed": 0, "failed": len(rows), "skipped": skipped, "failures": failures}
+            print(f"Claude unavailable, fallback to Rule-Based Analyzer. ({e})")
+            analyzer = None
+            use_claude = False
+            analysis_mode = "Rule-Based"
+
+    print(f"分析模式 : {analysis_mode}")
 
     succeeded = failed = 0
     for i, row in enumerate(rows, 1):
@@ -175,14 +195,19 @@ def analyze_pending_articles(conn, mock: bool = False, limit: Optional[int] = No
 
         print(f"[{i}/{len(rows)}] {title[:50]}{'…' if len(title) > 50 else ''}")
         try:
-            if mock:
-                result = mock_analyze(title=title, content=content, stock_codes=stock_codes)
+            if use_claude and analyzer is not None:
+                try:
+                    result = analyzer.analyze(
+                        title=title,
+                        content=content,
+                        stock_codes=stock_codes,
+                    )
+                except Exception as e:
+                    print(f"         → Claude unavailable, fallback to Rule-Based Analyzer. ({e})")
+                    fallback_count += 1
+                    result = mock_analyze(title=title, content=content, stock_codes=stock_codes)
             else:
-                result = analyzer.analyze(  # type: ignore[union-attr]
-                    title=title,
-                    content=content,
-                    stock_codes=stock_codes,
-                )
+                result = mock_analyze(title=title, content=content, stock_codes=stock_codes)
 
             update_sentiment(
                 conn,
@@ -200,7 +225,7 @@ def analyze_pending_articles(conn, mock: bool = False, limit: Optional[int] = No
             failures.append(msg)
             failed += 1
 
-        if i < len(rows) and not mock:
+        if i < len(rows) and use_claude and analyzer is not None:
             time.sleep(REQUEST_DELAY)
 
     print()
@@ -208,8 +233,17 @@ def analyze_pending_articles(conn, mock: bool = False, limit: Optional[int] = No
     print(f"  成功 : {succeeded} 篇")
     print(f"  失敗 : {failed} 篇")
     print(f"  跳過 : {skipped} 篇")
+    if fallback_count:
+        print(f"  Claude fallback : {fallback_count} 篇")
 
-    return {"analyzed": succeeded, "failed": failed, "skipped": skipped, "failures": failures}
+    return {
+        "analyzed": succeeded,
+        "failed": failed,
+        "skipped": skipped,
+        "failures": failures,
+        "mode": analysis_mode,
+        "fallback_count": fallback_count,
+    }
 
 
 def update_price_validation(conn, mock: bool = False, days: int = 30) -> dict:
@@ -250,9 +284,10 @@ def update_price_validation(conn, mock: bool = False, days: int = 30) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="抓新聞 → AI 分析 → Price Validation")
-    parser.add_argument("--mock", action="store_true", help="使用 mock AI 與 mock prices")
-    parser.add_argument("--mock-analysis", action="store_true", help="AI 分析階段使用 rule-based analyzer，不呼叫 Claude")
+    parser = argparse.ArgumentParser(description="抓新聞 → Rule-Based 分析 → Price Validation")
+    parser.add_argument("--mock", action="store_true", help="使用 rule-based analysis 與 mock prices")
+    parser.add_argument("--mock-analysis", action="store_true", help="alias：分析階段使用 Rule-Based Analyzer，不呼叫 Claude")
+    parser.add_argument("--use-claude", action="store_true", help="optional：使用 Claude API 做 deep analysis，失敗時自動 fallback")
     parser.add_argument("--limit", type=int, default=None, help="最多分析幾篇待分析文章")
     parser.add_argument("--days", type=int, default=30, help="價格驗證往回幾天文章")
     args = parser.parse_args()
@@ -276,8 +311,12 @@ def main() -> None:
             errors.append(msg)
 
         try:
-            use_mock_analysis = args.mock or args.mock_analysis
-            analysis_summary = analyze_pending_articles(conn, mock=use_mock_analysis, limit=args.limit)
+            use_claude_analysis = args.use_claude and not args.mock and not args.mock_analysis
+            analysis_summary = analyze_pending_articles(
+                conn,
+                use_claude=use_claude_analysis,
+                limit=args.limit,
+            )
             errors.extend(analysis_summary.get("failures", []))
         except Exception as e:
             msg = f"AI 分析階段失敗: {e}"
@@ -295,10 +334,15 @@ def main() -> None:
 
         duration = (datetime.now() - started).total_seconds()
         try:
+            analysis_mode = str(analysis_summary.get("mode") or "Rule-Based")
             record_pipeline_run(
                 conn,
                 ran_at=started,
-                mode="mock" if args.mock else ("mock-analysis" if args.mock_analysis else "real"),
+                mode=(
+                    "rule-based+demo-prices"
+                    if args.mock
+                    else ("claude" if analysis_mode == "Claude" else "rule-based")
+                ),
                 crawled_total=int(crawl_summary.get("crawled_total", 0)),
                 inserted=int(crawl_summary.get("inserted", 0)),
                 skipped=int(crawl_summary.get("skipped", 0)),

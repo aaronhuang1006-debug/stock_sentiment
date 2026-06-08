@@ -19,6 +19,13 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# ── 載入 .env（本機開發）；Streamlit Cloud 上 .env 不存在，靜默略過 ──
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except ImportError:
+    pass
+
 from models.price import get_validation_df
 
 DB_PATH = Path(__file__).parent.parent / "data" / "news.db"
@@ -913,8 +920,8 @@ with st.sidebar:
         st.warning(
             f"⚠️ 有 **{unanalyzed}** 篇新聞尚未分析。\n\n"
             "請執行：\n"
-            "`python3 run_pipeline.py --mock`\n"
-            "或 `--claude`",
+            "`python3 pipeline/update_all.py`\n"
+            "或 `python3 pipeline/update_all.py --use-claude`",
             icon=None,
         )
     st.divider()
@@ -976,7 +983,7 @@ with st.sidebar:
                 _conn = _get_conn(DB_PATH)
                 _create_tables(_conn)
                 _crawl(_conn)
-                _analyze(_conn, mock=True)
+                _analyze(_conn, use_claude=False)
                 _price(_conn, mock=False, days=30)
                 _conn.close()
             except Exception as _e:
@@ -1003,7 +1010,13 @@ with st.sidebar:
                 ran_at_str = ran_dt.strftime("%m/%d %H:%M")
             except Exception:
                 ran_at_str = str(pipe["ran_at"])[:16]
-        mode_label = pipe.get("mode", "—").upper()
+        raw_mode = str(pipe.get("mode", "—"))
+        mode_label = {
+            "mock": "rule-based",
+            "mock-analysis": "rule-based",
+            "mock-prices+rule-based": "rule-based+demo-prices",
+            "real": "claude",
+        }.get(raw_mode, raw_mode).upper()
         lines = [
             f'最後更新：{ran_at_str}',
             f'模式：{mode_label}',
@@ -1034,7 +1047,7 @@ if page == "Dashboard":
     st.markdown(f"""
 <div class="hdr">
   <div class="hdr-title">台股新聞 AI 分析平台</div>
-  <div class="hdr-sub">整合鉅亨網 · Yahoo 股市，以 Claude AI 分析情緒與市場影響力</div>
+  <div class="hdr-sub">整合鉅亨網 · Yahoo 股市，以 Rule-Based Financial Analyzer 分析情緒與市場影響力</div>
   <div class="hdr-time">最後更新：{now_str}</div>
 </div>""", unsafe_allow_html=True)
 
@@ -1100,7 +1113,7 @@ if page == "Dashboard":
     if kw_stats.empty:
         st.markdown(
             '<div style="color:#b0b5c3;font-size:.82rem;padding:.4rem 0 .8rem">'
-            '尚無 keywords 資料，請執行 <code>python3 pipeline/analyze_sentiment.py --mock --keywords-only</code>'
+            '尚無 keywords 資料，請執行 <code>python3 pipeline/update_all.py</code>'
             '</div>',
             unsafe_allow_html=True,
         )
