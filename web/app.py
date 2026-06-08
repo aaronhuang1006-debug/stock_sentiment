@@ -217,6 +217,50 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
 .nttl a:hover { color:#2563eb; text-decoration:underline; }
 .nstock { font-size:.7rem; color:#6b7280; background:#f3f4f6;
           border-radius:3px; padding:1px 5px; }
+.news-card {
+    position: relative;
+    border: 1px solid #d8dee9;
+    border-left: 4px solid #94a3b8;
+    border-radius: 8px;
+    padding: .9rem 1.05rem .85rem;
+    margin-bottom: .55rem;
+    box-shadow: 0 1px 3px rgba(15,23,42,.05);
+}
+.news-card:hover { box-shadow: 0 2px 10px rgba(15,23,42,.08); }
+.news-card-positive { background: #f0fdf4; border-left-color: #10b981; }
+.news-card-negative { background: #fff1f2; border-left-color: #e11d48; }
+.news-card-neutral  { background: #fff7ed; border-left-color: #f59e0b; }
+.news-card-pending  { background: #f1f5f9; border-left-color: #64748b; border-style: solid; }
+.news-card-high     { border-color: #fca5a5; box-shadow: 0 2px 10px rgba(220,38,38,.1); }
+.news-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+.news-card-title { flex: 1; min-width: 0; }
+.news-card-badges { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:.45rem; }
+.hi-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #dc2626;
+    color: #fff;
+    font-size: .68rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+.pending-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #e0e7ff;
+    color: #3730a3;
+    border: 1px solid #c7d2fe;
+    font-size: .68rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
 
 /* ── Sidebar ── */
 [data-testid="stSidebar"] { background:#ffffff; border-right:1px solid #e2e4e9; }
@@ -551,6 +595,30 @@ def score_pill(val) -> str:
     else:        css, tier = "s-low",  "低影響"
     return f'<span class="spill {css}">{v:.0f}/10 · {tier}</span>'
 
+def news_card_class(row) -> str:
+    classes = ["news-card"]
+    sentiment = row.get("sentiment")
+    if pd.isna(sentiment):
+        classes.append("news-card-pending")
+    elif str(sentiment) == "正面":
+        classes.append("news-card-positive")
+    elif str(sentiment) == "負面":
+        classes.append("news-card-negative")
+    else:
+        classes.append("news-card-neutral")
+
+    if pd.notna(row.get("impact_score")) and float(row.get("impact_score")) >= 8:
+        classes.append("news-card-high")
+    return " ".join(classes)
+
+def high_impact_badge(val) -> str:
+    if pd.notna(val) and float(val) >= 8:
+        return '<span class="hi-badge">High Impact</span>'
+    return ""
+
+def pending_badge(is_pending: bool) -> str:
+    return '<span class="pending-badge">Pending analysis</span>' if is_pending else ""
+
 def source_metric_rows(src_counts: "pd.Series") -> str:
     rows = []
     for source, count in src_counts.items():
@@ -704,11 +772,7 @@ def render_related_news(related: "pd.DataFrame", key_prefix: str, limit: int = 8
             st.markdown(format_reason(str(article.get("reason") or "")), unsafe_allow_html=True)
 
         if article_url:
-            st.link_button(
-                "查看原文",
-                article_url,
-                key=f"{key_prefix}_news_{article.get('id')}_{news_idx}",
-            )
+            st.markdown(f"[查看原文]({article_url})")
 
 def _build_insight(today_cnt: int, avg_score: float, pos_pct: float, neg_pct: float,
                    src_counts: "pd.Series", analyzed: int) -> str:
@@ -1156,15 +1220,19 @@ if page == "Dashboard":
 
     # ── 套用篩選 ──────────────────────────────────────────────
     news_df = df_all.copy()
+    debug_counts = {"all": len(news_df)}
 
     if keyword:
         news_df = news_df[news_df["title"].str.contains(keyword, case=False, na=False)]
+    debug_counts["keyword"] = len(news_df)
     if selected_sentiment == "尚未分析":
         news_df = news_df[news_df["sentiment"].isna()]
     elif selected_sentiment != "全部":
         news_df = news_df[news_df["sentiment"] == selected_sentiment]
+    debug_counts["sentiment"] = len(news_df)
     if selected_source != "全部來源":
         news_df = news_df[news_df["source"] == selected_source]
+    debug_counts["source"] = len(news_df)
     if sort_by_score:
         news_df = news_df.sort_values("impact_score", ascending=False, na_position="last")
 
@@ -1173,6 +1241,7 @@ if page == "Dashboard":
         display_news_df = news_df
     else:
         display_news_df = news_df.head(int(news_count_option))
+    debug_counts["display"] = len(display_news_df)
 
     # ── 新聞列表 ──────────────────────────────────────────────
     st.markdown(
@@ -1180,6 +1249,14 @@ if page == "Dashboard":
         f'<span style="font-weight:400;text-transform:none;letter-spacing:0;color:#b0b5c3;margin-left:8px">'
         f'顯示 {len(display_news_df)} / {filtered_total} 篇</span></div>',
         unsafe_allow_html=True,
+    )
+    st.caption(f"Debug: filtered articles = {len(news_df)}")
+    st.caption(f"Debug: display articles = {len(display_news_df)}")
+    st.caption(
+        "Debug filters: "
+        f"all={debug_counts['all']} → keyword={debug_counts['keyword']} "
+        f"→ sentiment={debug_counts['sentiment']} → source={debug_counts['source']} "
+        f"→ display={debug_counts['display']} ({news_count_option})"
     )
 
     if display_news_df.empty:
@@ -1190,7 +1267,8 @@ if page == "Dashboard":
   <div class="empty-state-sub">請調整左側篩選條件後再試。</div>
 </div>""", unsafe_allow_html=True)
     else:
-        for news_idx, (_, row) in enumerate(display_news_df.iterrows(), 1):
+        rendered_count = 0
+        for idx, row in display_news_df.iterrows():
             pub_time = (
                 row["published_at"].strftime("%Y-%m-%d %H:%M")
                 if pd.notna(row["published_at"]) else "—"
@@ -1200,7 +1278,13 @@ if page == "Dashboard":
                 if row["stock_codes_str"] else ""
             )
             is_unanalyzed = pd.isna(row["sentiment"])
-            ncard_extra   = ' style="border-style:dashed;opacity:.82"' if is_unanalyzed else ""
+            article_id = row["id"] if "id" in row.index and pd.notna(row["id"]) else idx
+            article_url = str(row.get("url") or "").strip()
+            title_text = str(row.get("title") or "Untitled")
+            title_html = (
+                f'<a href="{escape(article_url)}" target="_blank">{escape(title_text)}</a>'
+                if article_url else escape(title_text)
+            )
 
             # keywords chips（已分析且有 keywords 才顯示）
             kws = row.get("keywords_list", []) if "keywords_list" in row.index else []
@@ -1213,15 +1297,21 @@ if page == "Dashboard":
                 )
 
             st.markdown(f"""
-<div class="ncard"{ncard_extra}>
-  <div class="nmeta">
-    {src_badge(row['source'])}
-    {senti_chip(row['sentiment'])}
-    {score_pill(row['impact_score'])}
-    <span class="ntime">{pub_time}</span>
-    {stock_tag}
+<div class="{news_card_class(row)}">
+  <div class="news-card-top">
+    <div class="news-card-title">
+      <div class="nttl">{title_html}</div>
+      <div class="news-card-badges">
+        {src_badge(row['source'])}
+        <span class="ntime">{pub_time}</span>
+        {senti_chip(row['sentiment'])}
+        {score_pill(row['impact_score'])}
+        {pending_badge(is_unanalyzed)}
+        {stock_tag}
+      </div>
+    </div>
+    <div>{high_impact_badge(row['impact_score'])}</div>
   </div>
-  <div class="nttl"><a href="{row['url']}" target="_blank">{row['title']}</a></div>
   {kw_row_html}
 </div>""", unsafe_allow_html=True)
 
@@ -1229,7 +1319,7 @@ if page == "Dashboard":
             if st.toggle(
                 toggle_label,
                 value=False,
-                key=f"news_analysis_{row['id']}_{news_idx}",
+                key=f"news_analysis_{article_id}",
             ):
                 if is_unanalyzed:
                     st.markdown(format_pending_analysis(), unsafe_allow_html=True)
@@ -1237,8 +1327,10 @@ if page == "Dashboard":
                     st.markdown(format_reason(str(row["reason"])), unsafe_allow_html=True)
                 else:
                     st.markdown(format_reason(""), unsafe_allow_html=True)
+            rendered_count += 1
 
         st.caption(f"Showing {len(display_news_df)} of {filtered_total} articles")
+        st.caption(f"Debug: render loop completed = {rendered_count} cards")
 
 else:
     render_validation_tab(DB_PATH)
