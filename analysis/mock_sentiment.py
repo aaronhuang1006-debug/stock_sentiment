@@ -1,150 +1,273 @@
 """
-mock_sentiment.py — Rule-Based Analyzer（不呼叫 Claude API）
+Rule-Based Financial Analyzer
 
-依照標題與內容做財經關鍵字比對，產生 sentiment / impact_score /
-reason / keywords。適用於 ANTHROPIC_API_KEY 沒額度、Demo，或離線測試。
-結果是規則式近似判斷，不代表真實市場建議。
+在不呼叫 Claude API 的情況下，使用財經關鍵字權重、事件類型與市場敏感度
+產生 sentiment / impact_score / reason / keywords。保留 mock_analyze 函式名稱，
+讓既有 pipeline 可以無痛改用 rule-based 分析結果。
 """
 
 import re
+import sys
+from pathlib import Path
 from typing import Optional
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from analysis.sentiment import SentimentResult
 
-# ── 市場關鍵字抽取詞典 ────────────────────────────────────────
-# 格式：(正規表示式或字串, 標準化顯示名稱)
-# 先比對 title + content，命中的取前 5 個；不足時用情緒 fallback 補齊
-_KW_PATTERNS: list[tuple[str, str]] = [
-    # 技術 / 產品
-    (r"CoWoS",        "CoWoS封裝"),
-    (r"HBM",          "HBM記憶體"),
-    (r"ASIC",         "ASIC晶片"),
-    (r"GB200|GH200|H100|H200|B200", "輝達AI晶片"),
-    (r"液冷|水冷散熱",  "液冷散熱"),
-    (r"AI伺服器|AI server", "AI伺服器"),
-    (r"邊緣運算|Edge AI",   "邊緣運算"),
-    (r"電動車|EV\b",   "電動車"),
-    (r"儲能|電池",     "儲能電池"),
-    (r"晶圓代工|foundry", "晶圓代工"),
-    (r"先進封裝|advanced packaging", "先進封裝"),
-    (r"3nm|2nm|5nm",  "先進製程"),
-    (r"DRAM|HBM|DDR", "記憶體"),
-    (r"NAND|Flash",   "Flash儲存"),
-    (r"PCB|電路板",    "PCB電路板"),
-    (r"散熱|熱管",     "散熱模組"),
-    (r"伺服器|server", "伺服器"),
-    (r"AI.*伺服器|伺服器.*AI", "AI伺服器"),
-    (r"資料中心|data center", "資料中心"),
-    (r"網通|交換器",   "網通設備"),
-    (r"光模組|光纖",   "光模組"),
-    # 事件 / 財務
-    (r"法說會",        "法說會"),
-    (r"營收",          "營收表現"),
-    (r"營收年減",      "營收年減"),
-    (r"獲利|EPS|每股盈餘", "獲利展望"),
-    (r"下修|下調",     "獲利下修"),
-    (r"上修|上調|調升", "評等調升"),
-    (r"庫存",          "庫存調整"),
-    (r"漲價|提價",     "漲價題材"),
-    (r"降價|砍價",     "價格壓力"),
-    (r"訂單",          "訂單能見度"),
-    (r"接單",          "接單動能"),
-    (r"擴產|增產",     "產能擴充"),
-    (r"裁員|減班",     "人力縮編"),
-    (r"併購|收購",     "併購題材"),
-    (r"分拆|spin.?off", "業務分拆"),
-    (r"配息|股息|殖利率", "股息配發"),
-    (r"回購|買回",     "庫藏股"),
-    # 大廠名稱
-    (r"台積電|TSMC",   "台積電"),
-    (r"輝達|NVIDIA|nVidia", "輝達"),
-    (r"蘋果|Apple",    "蘋果供應鏈"),
-    (r"AMD",           "AMD"),
-    (r"英特爾|Intel",  "英特爾"),
-    (r"三星|Samsung",  "三星"),
-    (r"聯發科|MediaTek", "聯發科"),
-    (r"鴻海|富士康",   "鴻海"),
-    # 總經 / 指數
-    (r"Fed|聯準會|升息|降息", "Fed政策"),
-    (r"美中貿易|關稅",  "貿易關稅"),
-    (r"外資|QFII",     "外資動向"),
-    (r"外資.*買超|買超", "外資買超"),
-    (r"外資.*賣超|賣超", "外資賣超"),
+
+POSITIVE_SIGNALS: list[tuple[str, float, str, str]] = [
+    (r"營收創高|營收.*創.*高", 4.0, "營收創高", "營收表現"),
+    (r"獲利成長|獲利.*成長|EPS.*成長", 4.0, "獲利成長", "獲利成長"),
+    (r"優於預期|超乎預期|高於預期", 4.0, "優於預期", "獲利成長"),
+    (r"外資買超", 3.0, "外資買超", "外資買超"),
+    (r"訂單增加|接單增加|接單暢旺", 3.0, "訂單增加", "供應鏈"),
+    (r"AI需求|AI.*需求", 3.0, "AI需求", "AI伺服器"),
+    (r"伺服器需求|伺服器.*需求", 3.0, "伺服器需求", "AI伺服器"),
+    (r"擴產|增產", 2.0, "擴產", "供應鏈"),
+    (r"法說樂觀|法說.*樂觀", 2.0, "法說樂觀", "法說會"),
+    (r"股利增加|配息增加|提高股利", 2.0, "股利增加", "股利政策"),
+    (r"上修展望|上修.*展望|調升展望", 4.0, "上修展望", "獲利成長"),
+    (r"毛利率改善|毛利.*改善", 3.0, "毛利率改善", "獲利成長"),
 ]
 
-# Fallback 詞庫（依情緒）
-_KW_FALLBACK = {
-    "正面": ["業績優於預期", "外資買超", "法說會樂觀", "訂單能見度佳"],
-    "負面": ["獲利下修", "庫存調整", "訂單減少", "評等調降"],
-    "中立": ["財報公布", "產能利用率", "匯率影響", "產業觀察"],
-}
+NEGATIVE_SIGNALS: list[tuple[str, float, str, str]] = [
+    (r"獲利下修|下修.*獲利", -4.0, "獲利下修", "獲利下修"),
+    (r"營收年減|營收.*年減", -3.0, "營收年減", "營收表現"),
+    (r"虧損|轉虧", -4.0, "虧損", "財務風險"),
+    (r"外資賣超", -3.0, "外資賣超", "外資賣超"),
+    (r"砍單|訂單.*減少", -4.0, "砍單", "供應鏈"),
+    (r"庫存過高|庫存.*過高", -3.0, "庫存過高", "庫存調整"),
+    (r"毛利率下滑|毛利.*下滑", -3.0, "毛利率下滑", "獲利下修"),
+    (r"裁員|減班休息", -3.0, "裁員", "財務風險"),
+    (r"法說保守|法說.*保守", -2.0, "法說保守", "法說會"),
+    (r"需求疲弱|需求.*疲弱", -3.0, "需求疲弱", "供應鏈"),
+    (r"降評|調降評等|評等調降", -3.0, "降評", "獲利下修"),
+    (r"退票", -4.0, "退票", "財務風險"),
+    (r"財務危機|債務危機|違約", -5.0, "財務危機", "財務風險"),
+    (r"訴訟|被告|求償|裁罰", -3.0, "訴訟", "訴訟風險"),
+]
+
+NEUTRAL_SIGNALS = [
+    "公告",
+    "董事會",
+    "股東會",
+    "除權息",
+    "法說會",
+    "營收公布",
+    "例行資訊",
+    "代子公司公告",
+]
+
+EVENT_PATTERNS: list[tuple[str, str]] = [
+    ("financial_distress", r"退票|財務危機|債務危機|違約|資金缺口"),
+    ("legal_risk", r"訴訟|被告|求償|裁罰|罰款"),
+    ("foreign_investor", r"外資|買超|賣超"),
+    ("ai_semiconductor", r"台積電|輝達|NVIDIA|AI|半導體|記憶體|HBM|伺服器"),
+    ("guidance", r"上修|下修|展望|法說樂觀|法說保守|需求疲弱|降評"),
+    ("earnings", r"財報|獲利|EPS|毛利率|盈餘"),
+    ("revenue", r"營收|營收創高|營收年減|營收公布"),
+    ("dividend", r"股利|配息|除權息"),
+    ("macro_fx", r"匯率|台幣|新台幣|美元|Fed|聯準會|升息|降息"),
+    ("supply_chain", r"供應鏈|砍單|接單|訂單|庫存|擴產"),
+    ("routine_announcement", r"例行公告|公告|董事會|股東會|代子公司公告|例行資訊"),
+]
+
+MARKET_SENSITIVE_RE = re.compile(
+    r"台積電|輝達|NVIDIA|AI|半導體|記憶體|HBM|DRAM|NAND|伺服器",
+    re.IGNORECASE,
+)
+FINANCIAL_EVENT_RE = re.compile(r"財報|營收|獲利|法說會|EPS|毛利率")
+FOREIGN_INVESTOR_RE = re.compile(r"外資買超|外資賣超")
+SEVERE_NEGATIVE_RE = re.compile(r"下修|虧損|退票|財務危機|違約")
+ROUTINE_RE = re.compile(r"例行公告|董事會|股東會|除權息")
+SUBSIDIARY_RE = re.compile(r"代子公司公告")
+COMPANY_INDUSTRY_RE = re.compile(
+    r"\b\d{4}\b|台積電|聯發科|鴻海|台達電|廣達|緯創|華碩|技嘉|"
+    r"AI|半導體|記憶體|伺服器|電子|金融|航運|鋼鐵|生技|電動車|供應鏈",
+    re.IGNORECASE,
+)
+
+STANDARD_KEYWORDS: list[tuple[str, str]] = [
+    (r"營收創高|營收年減|營收公布|營收", "營收表現"),
+    (r"獲利成長|優於預期|毛利率改善|EPS", "獲利成長"),
+    (r"獲利下修|下修|降評|毛利率下滑", "獲利下修"),
+    (r"外資買超", "外資買超"),
+    (r"外資賣超", "外資賣超"),
+    (r"AI需求|AI伺服器|AI.*伺服器|伺服器.*AI|伺服器需求", "AI伺服器"),
+    (r"半導體|台積電|晶圓|先進製程", "半導體"),
+    (r"記憶體|HBM|DRAM|NAND", "記憶體"),
+    (r"法說會|法說", "法說會"),
+    (r"財報", "財報公布"),
+    (r"股利|配息|除權息", "股利政策"),
+    (r"匯率|台幣|新台幣|美元", "匯率影響"),
+    (r"庫存|庫存過高", "庫存調整"),
+    (r"供應鏈|訂單|接單|砍單|擴產", "供應鏈"),
+    (r"財務危機|退票|違約|虧損|債務", "財務風險"),
+    (r"訴訟|被告|求償|裁罰", "訴訟風險"),
+    (r"例行公告|公告|董事會|股東會|代子公司公告|例行資訊", "例行公告"),
+]
 
 
-def _extract_keywords(text: str, sentiment: str) -> list[str]:
-    """
-    從 title + content 依詞典抽取關鍵字，不足 3 個時用 fallback 補齊。
-    最多回傳 5 個，去重。
-    """
-    found: list[str] = []
+def _weighted_hits(
+    title: str,
+    content: Optional[str],
+    signals: list[tuple[str, float, str, str]],
+) -> tuple[float, list[dict]]:
+    score = 0.0
+    hits: list[dict] = []
+    body = content or ""
+
+    for pattern, weight, label, keyword in signals:
+        contribution = 0.0
+        in_title = bool(re.search(pattern, title, re.IGNORECASE))
+        in_content = bool(body and re.search(pattern, body, re.IGNORECASE))
+
+        if in_title:
+            contribution += weight * 1.5
+        if in_content:
+            contribution += weight
+
+        if contribution:
+            score += contribution
+            hits.append(
+                {
+                    "label": label,
+                    "keyword": keyword,
+                    "base_weight": weight,
+                    "contribution": contribution,
+                }
+            )
+
+    return score, hits
+
+
+def _classify_event_type(text: str) -> str:
+    for event_type, pattern in EVENT_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return event_type
+    return "unknown"
+
+
+def _has_strong_directional_signal(hits: list[dict]) -> bool:
+    return any(abs(float(hit["base_weight"])) >= 3 for hit in hits)
+
+
+def _impact_score(text: str, signal_hits: list[dict]) -> float:
+    score = 3.0
+
+    if MARKET_SENSITIVE_RE.search(text):
+        score += 2.0
+    if FINANCIAL_EVENT_RE.search(text):
+        score += 1.5
+    if FOREIGN_INVESTOR_RE.search(text):
+        score += 1.0
+    if SEVERE_NEGATIVE_RE.search(text):
+        score += 2.0
+
+    strong_hit_count = sum(1 for hit in signal_hits if abs(float(hit["base_weight"])) >= 3)
+    if strong_hit_count >= 2:
+        score += 1.0
+
+    if ROUTINE_RE.search(text):
+        score -= 1.5
+    if SUBSIDIARY_RE.search(text):
+        score -= 1.0
+    if not COMPANY_INDUSTRY_RE.search(text):
+        score -= 1.0
+
+    return round(max(1.0, min(10.0, score)), 1)
+
+
+def _standardize_keywords(text: str, signal_hits: list[dict]) -> list[str]:
+    keywords: list[str] = []
     seen: set[str] = set()
-    for pattern, label in _KW_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE) and label not in seen:
-            found.append(label)
-            seen.add(label)
-        if len(found) >= 5:
+
+    for hit in signal_hits:
+        keyword = str(hit["keyword"])
+        if keyword not in seen:
+            keywords.append(keyword)
+            seen.add(keyword)
+        if len(keywords) >= 5:
+            return keywords
+
+    for pattern, keyword in STANDARD_KEYWORDS:
+        if re.search(pattern, text, re.IGNORECASE) and keyword not in seen:
+            keywords.append(keyword)
+            seen.add(keyword)
+        if len(keywords) >= 5:
             break
 
-    # 不足 3 個時從 fallback 補（不重複）
-    if len(found) < 3:
-        for fb in _KW_FALLBACK.get(sentiment, _KW_FALLBACK["中立"]):
-            if fb not in seen:
-                found.append(fb)
-                seen.add(fb)
-            if len(found) >= 3:
-                break
+    if not keywords:
+        keywords.append("例行公告" if re.search(r"公告|董事會|股東會", text) else "營收表現")
 
-    return found[:5]
-
-# ── 情緒關鍵字 ────────────────────────────────────────────────
-_POSITIVE_WORDS = [
-    "獲利", "成長", "突破", "得標", "合約", "上調", "買進", "超越", "創高",
-    "利多", "受惠", "訂單", "擴產", "轉盈", "調升", "大增", "新高", "強勁",
-    "創紀錄", "優於預期", "大幅成長", "大客戶", "量產", "重大合作",
-    "買超", "接單", "上修", "法說樂觀", "需求強勁",
-]
-_NEGATIVE_WORDS = [
-    "虧損", "衰退", "下調", "賣出", "裁員", "訴訟", "中斷", "召回", "警示",
-    "利空", "下修", "虧", "跌", "減少", "停產", "停工", "違約", "罰款",
-    "低於預期", "大幅衰退", "重大損失", "轉虧",
-    "砍單", "賣超", "庫存過高", "毛利下滑", "營收年減",
-]
-_NEUTRAL_WORDS = [
-    "公告", "法說會", "股東會", "除權息", "營收公布", "董事會", "例行訊息",
-]
-
-# ── 規模關鍵字 ────────────────────────────────────────────────
-# 大型權值股代號 or 公司名稱
-_LARGE_CAP = [
-    "台積電", "2330", "聯發科", "2454", "鴻海", "2317", "台達電", "2308",
-    "聯電", "2303", "日月光", "3711", "廣達", "2382", "緯創", "3231",
-    "華碩", "2357", "技嘉", "2376", "富士康", "中華電", "2412",
-]
-_MID_CAP_SIGNALS = ["億元", "百億", "十億"]
-
-# ── 確定性關鍵字 ──────────────────────────────────────────────
-_HIGH_CERTAINTY = ["已簽約", "正式合約", "量產", "實際出貨", "宣布", "公告"]
-_LOW_CERTAINTY  = ["傳出", "據悉", "消息指出", "備忘錄", "MOU", "規劃", "洽談中"]
-_HIGH_IMPACT_WORDS = [
-    "財報", "營收", "獲利", "法說會", "外資", "AI", "半導體", "台積電",
-    "輝達", "記憶體", "伺服器",
-]
-_LOW_IMPACT_WORDS = [
-    "例行公告", "日期", "股東會", "除息", "除權息", "董事會", "一般行政資訊",
-]
+    return keywords[:5]
 
 
-def _count_matches(text: str, keywords: list[str]) -> int:
-    return sum(1 for kw in keywords if kw in text)
+def _labels_for_reason(hits: list[dict], positive: bool) -> str:
+    filtered = [
+        hit for hit in hits
+        if (float(hit["base_weight"]) > 0) == positive
+    ]
+    filtered.sort(key=lambda item: abs(float(item["contribution"])), reverse=True)
+    labels = []
+    seen = set()
+    for hit in filtered:
+        label = str(hit["label"])
+        if label not in seen:
+            labels.append(f"「{label}」")
+            seen.add(label)
+        if len(labels) >= 3:
+            break
+    return "、".join(labels)
+
+
+def _build_reason(
+    sentiment: str,
+    impact_score: float,
+    event_type: str,
+    text: str,
+    signal_hits: list[dict],
+) -> str:
+    sentiment_label = {"正面": "Positive", "負面": "Negative", "中立": "Neutral"}[sentiment]
+
+    if sentiment == "正面":
+        labels = _labels_for_reason(signal_hits, positive=True) or "正面財務訊號"
+        first_line = f"偵測到{labels}等正面財務訊號。"
+    elif sentiment == "負面":
+        labels = _labels_for_reason(signal_hits, positive=False) or "負面營運訊號"
+        first_line = f"偵測到{labels}等負面訊號。"
+    else:
+        if event_type == "routine_announcement":
+            first_line = "內容主要屬於例行公告或資訊揭露。"
+        else:
+            first_line = "未偵測到明顯正面或負面財務訊號。"
+
+    if MARKET_SENSITIVE_RE.search(text):
+        impact_line = "新聞涉及 AI / 半導體等高市場敏感產業，因此提高 impact score。"
+    elif event_type in {"financial_distress", "legal_risk"}:
+        impact_line = "事件涉及財務或法律風險，可能影響市場對公司穩定性的評估。"
+    elif event_type == "routine_announcement":
+        impact_line = "內容偏例行資訊，市場衝擊通常較低。"
+    else:
+        impact_line = "事件與一般營運或財務資訊相關，impact score 依關鍵字強度調整。"
+
+    if sentiment == "負面":
+        middle_line = "該事件可能影響市場對公司未來獲利的預期。"
+    elif sentiment == "正面":
+        middle_line = "該事件可能改善市場對公司營收或獲利動能的預期。"
+    else:
+        middle_line = "目前缺乏足以改變市場預期的明確方向性訊號。"
+
+    return (
+        "Rule-Based Analysis:\n"
+        f"- {first_line}\n"
+        f"- {impact_line}\n"
+        f"- {middle_line}\n"
+        f"- 綜合判斷為 {sentiment_label}，impact score 為 {impact_score:.1f}。"
+    )
 
 
 def mock_analyze(
@@ -154,122 +277,88 @@ def mock_analyze(
     keywords_only: bool = False,
 ) -> SentimentResult:
     """
-    以關鍵字規則產生 rule-based 分析結果。
+    Rule-Based Financial Analyzer 入口。
+
+    title 命中權重為 1.5 倍，content 命中權重為 1.0 倍。sentiment 回傳中文
+    標籤（正面 / 負面 / 中立）以相容既有 dashboard 與資料表。
     """
-    full_text = title + " " + (content or "")[:800]
+    full_text = f"{title} {content or ''}"
+    positive_score, positive_hits = _weighted_hits(title, content, POSITIVE_SIGNALS)
+    negative_score, negative_hits = _weighted_hits(title, content, NEGATIVE_SIGNALS)
+    signal_hits = positive_hits + negative_hits
+    sentiment_score = positive_score + negative_score
+    event_type = _classify_event_type(full_text)
 
-    # ── 1. 情緒判斷 ────────────────────────────────────────────
-    pos = _count_matches(full_text, _POSITIVE_WORDS)
-    neg = _count_matches(full_text, _NEGATIVE_WORDS)
-    neu = _count_matches(full_text, _NEUTRAL_WORDS)
-
-    if pos > neg and pos > 0:
+    if event_type == "routine_announcement" and not _has_strong_directional_signal(signal_hits):
+        sentiment = "中立"
+    elif sentiment_score >= 2:
         sentiment = "正面"
-    elif neg > pos and neg > 0:
+    elif sentiment_score <= -2:
         sentiment = "負面"
-    elif neu > 0:
-        sentiment = "中立"
     else:
         sentiment = "中立"
 
-    # ── 2. 四維度評估 ──────────────────────────────────────────
-    # A. 公司規模
-    is_large_cap = any(kw in full_text for kw in _LARGE_CAP) or bool(stock_codes)
-    has_mid_cap  = any(kw in full_text for kw in _MID_CAP_SIGNALS)
-    if is_large_cap:
-        scale_score = 3   # 大型權值股
-        scale_note  = f"涉及{'、'.join(stock_codes) if stock_codes else '大型'}權值股"
-    elif has_mid_cap:
-        scale_score = 2   # 中型
-        scale_note  = "涉及中型公司，具一定市場規模"
-    else:
-        scale_score = 1   # 小型或不明
-        scale_note  = "公司規模較小或未明確揭示"
-
-    # B. 獲利影響
-    has_number   = bool(re.search(r"\d+\.?\d*\s*[億萬%％]", full_text))
-    high_certain = any(kw in full_text for kw in _HIGH_CERTAINTY)
-    low_certain  = any(kw in full_text for kw in _LOW_CERTAINTY)
-
-    if has_number and high_certain:
-        profit_score = 3
-        profit_note  = "有具體財務數字且確定性高"
-    elif has_number or high_certain:
-        profit_score = 2
-        profit_note  = "有部分財務數字或確認訊號，但完整性不足"
-    elif low_certain:
-        profit_score = 1
-        profit_note  = "消息仍屬傳聞或計畫階段，確定性低"
-    else:
-        profit_score = 1
-        profit_note  = "無具體財務數字，獲利影響不明"
-
-    # C. 市場影響
-    is_rare_event = pos >= 3 or neg >= 3
-    if is_rare_event:
-        market_score = 2
-        market_note  = "具多項正/負面訊號，屬非例行性市場事件"
-    else:
-        market_score = 1
-        market_note  = "屬例行性公告或一般市場資訊"
-
-    # D. 指數影響
-    # 大型權值股且有實質財務影響才可能連動指數
-    if is_large_cap and profit_score >= 2:
-        index_score = 2
-        index_note  = "大型權值股有財務影響，具一定指數連動可能"
-    else:
-        index_score = 1
-        index_note  = "影響侷限於個股，指數連動性低"
-
-    # ── 3. 加總計算 impact_score（1–10）─────────────────────────
-    high_impact_hits = _count_matches(full_text, _HIGH_IMPACT_WORDS)
-    low_impact_hits = _count_matches(full_text, _LOW_IMPACT_WORDS)
-    raw = scale_score + profit_score + market_score + index_score  # 4–10
-    raw += min(high_impact_hits, 3) * 0.4
-    raw -= min(low_impact_hits, 3) * 0.5
-    if sentiment in {"正面", "負面"}:
-        raw += min(max(pos, neg), 3) * 0.2
-    impact_score = round(float(max(1, min(10, raw))), 1)
-
-    # ── 4. 找出主要加分原因 ────────────────────────────────────
-    dim_scores = {
-        "公司規模": scale_score,
-        "獲利影響": profit_score,
-        "市場影響": market_score,
-        "指數影響": index_score,
-    }
-    top_dims = [k for k, v in dim_scores.items() if v == max(dim_scores.values())]
-    top_label = "、".join(top_dims)
-
-    # ── 5. 抽取市場關鍵字 ──────────────────────────────────────
-    keywords = _extract_keywords(full_text, sentiment)
-
-    sentiment_label = {"正面": "Positive", "負面": "Negative", "中立": "Neutral"}[sentiment]
-    signal_note = {
-        "正面": "文章包含正面財務或需求訊號",
-        "負面": "文章包含負面營運或市場壓力訊號",
-        "中立": "文章偏例行公告或資訊揭露，缺乏明確多空方向",
-    }[sentiment]
-    impact_note = (
-        "關鍵字包含高影響族群或事件，可能影響市場預期"
-        if high_impact_hits
-        else "未出現明顯高影響族群或重大事件關鍵字"
-    )
-    keyword_note = "、".join(keywords[:3]) if keywords else "無明確關鍵字"
-    reason = (
-        "AI Analysis:\n"
-        f"- {signal_note}\n"
-        f"- 關鍵字包含 {keyword_note}\n"
-        f"- {impact_note}\n"
-        f"- 四維度主要加分原因：{top_label}；{scale_note}；{profit_note}\n"
-        f"- 因此判定為 {sentiment_label}，impact score 為 {impact_score:.1f}"
+    impact = _impact_score(full_text, signal_hits)
+    keywords = _standardize_keywords(full_text, signal_hits)
+    reason = _build_reason(
+        sentiment=sentiment,
+        impact_score=impact,
+        event_type=event_type,
+        text=full_text,
+        signal_hits=signal_hits,
     )
 
     return SentimentResult(
         sentiment=sentiment,
-        impact_score=impact_score,
+        impact_score=impact,
         reason=reason,
         keywords=keywords,
-        raw_response="[MOCK]",
+        raw_response="[RULE_BASED]",
     )
+
+
+def _demo() -> None:
+    examples = [
+        {
+            "name": "正面財報",
+            "title": "台積電財報優於預期 營收創高且毛利率改善",
+            "content": "公司表示 AI需求與伺服器需求強勁，帶動獲利成長。",
+        },
+        {
+            "name": "負面下修",
+            "title": "電子零組件廠獲利下修 需求疲弱且庫存過高",
+            "content": "法人同步降評，預期毛利率下滑壓力延續。",
+        },
+        {
+            "name": "AI半導體",
+            "title": "AI伺服器需求升溫 半導體供應鏈訂單增加",
+            "content": "輝達 NVIDIA 新平台帶動記憶體與伺服器相關廠商接單增加。",
+        },
+        {
+            "name": "例行公告",
+            "title": "公司代子公司公告董事會決議召開股東會",
+            "content": "本案屬例行資訊揭露，未涉及重大財務預測。",
+        },
+        {
+            "name": "財務危機",
+            "title": "上市公司爆發退票與財務危機 恐面臨訴訟",
+            "content": "市場擔憂債務違約風險升高，營運資金出現缺口。",
+        },
+    ]
+
+    for example in examples:
+        result = mock_analyze(
+            title=example["title"],
+            content=example["content"],
+            stock_codes=[],
+        )
+        print(f"=== {example['name']} ===")
+        print(f"sentiment: {result.sentiment}")
+        print(f"impact_score: {result.impact_score}")
+        print(f"keywords: {', '.join(result.keywords)}")
+        print(result.reason)
+        print()
+
+
+if __name__ == "__main__":
+    _demo()

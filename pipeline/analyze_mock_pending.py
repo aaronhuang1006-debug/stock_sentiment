@@ -1,5 +1,5 @@
 """
-analyze_mock_pending.py — rule-based 補分析所有 pending articles.
+analyze_mock_pending.py — Rule-Based Financial Analyzer 補分析 pending articles.
 
 執行方式：
     cd ~/Desktop/stock_sentiment
@@ -52,8 +52,8 @@ def main() -> None:
     ).fetchone()[0]
 
     print("── Rule-Based Pending Analysis ─────────────")
-    print(f"待分析 : {total} 篇")
-    print(f"跳過已完整分析 : {skipped} 篇")
+    print(f"pending before : {total}")
+    print(f"skipped analyzed : {skipped}")
 
     if total == 0:
         print("\n✅ 沒有待分析文章，所有文章均已完成分析。")
@@ -96,9 +96,10 @@ def main() -> None:
 
     print()
     print("── Rule-Based 分析完成 ───────────────")
-    print(f"  成功 : {succeeded} 篇")
-    print(f"  失敗 : {failed} 篇")
-    print(f"  剩餘 pending : {remaining} 篇")
+    print(f"  processed : {total}")
+    print(f"  success : {succeeded}")
+    print(f"  failed : {failed}")
+    print(f"  pending after : {remaining}")
     print(f"  DB 位置: {DB_PATH}")
     print("──────────────────────────────────────")
 
