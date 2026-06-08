@@ -1203,14 +1203,14 @@ if page == "Dashboard":
                 unsafe_allow_html=True,
             )
             chips_html = '<div class="hi-kw-grid">'
-            for keyword, count in hi_counter.most_common(20):
-                related = related_articles_for_driver(high_kw_df, keyword)
-                avg_impact = related["impact_score"].dropna().mean() if not related.empty else float("nan")
-                avg_str = f"avg {avg_impact:.1f}/10" if not pd.isna(avg_impact) else "—"
+            for hi_kw, hi_kw_count in hi_counter.most_common(20):
+                hi_related = related_articles_for_driver(high_kw_df, hi_kw)
+                hi_avg = hi_related["impact_score"].dropna().mean() if not hi_related.empty else float("nan")
+                hi_avg_str = f"avg {hi_avg:.1f}/10" if not pd.isna(hi_avg) else "—"
                 chips_html += (
                     f'<div class="hi-kw-card">'
-                    f'<div class="hi-kw-name">{keyword}</div>'
-                    f'<div class="hi-kw-meta">出現 {count} 次 · {avg_str}</div>'
+                    f'<div class="hi-kw-name">{hi_kw}</div>'
+                    f'<div class="hi-kw-meta">出現 {hi_kw_count} 次 · {hi_avg_str}</div>'
                     f'</div>'
                 )
             chips_html += '</div>'
