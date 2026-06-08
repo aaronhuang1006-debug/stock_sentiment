@@ -27,6 +27,7 @@ except ImportError:
     pass
 
 from models.price import get_validation_df
+from models.db import create_tables
 
 DB_PATH = Path(__file__).parent.parent / "data" / "news.db"
 
@@ -238,6 +239,18 @@ div[data-testid="stVerticalBlock"] { gap: 0 !important; }
 }
 .news-card-title { flex: 1; min-width: 0; }
 .news-card-badges { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:.4rem; }
+.rel-badge {
+    display:inline-flex; align-items:center; height:20px; padding:0 8px;
+    border-radius:999px; font-size:.68rem; font-weight:700;
+    color:#075985; background:#e0f2fe; border:1px solid #bae6fd;
+}
+.rel-badge-high { color:#7f1d1d; background:#fee2e2; border-color:#fecaca; }
+.stock-chip {
+    display:inline-flex; align-items:center; height:20px; padding:0 8px;
+    border-radius:999px; font-size:.67rem; font-weight:650;
+    color:#334155; background:#f1f5f9; border:1px solid #dbe3ee;
+}
+.stock-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:.45rem; }
 /* High impact: subtle outline badge only, no card re-coloring */
 .hi-badge {
     display: inline-block;
@@ -500,10 +513,14 @@ def load_articles() -> pd.DataFrame:
     if not DB_PATH.exists():
         return pd.DataFrame()
     conn = sqlite3.connect(DB_PATH)
+    create_tables(conn)
     df = pd.read_sql_query(
         """SELECT id, source, title, url, published_at,
                   sentiment, impact_score, reason, stock_codes,
-                  COALESCE(keywords, '[]') AS keywords
+                  COALESCE(keywords, '[]') AS keywords,
+                  relevance_score,
+                  COALESCE(affected_stocks, '[]') AS affected_stocks,
+                  analysis_method
            FROM   articles ORDER BY published_at DESC""",
         conn,
     )
@@ -524,8 +541,16 @@ def load_articles() -> pd.DataFrame:
         except Exception:
             return []
 
+    def parse_stocks(raw):
+        try:
+            stocks = json.loads(raw or "[]")
+            return stocks if isinstance(stocks, list) else []
+        except Exception:
+            return []
+
     df["stock_codes_str"] = df["stock_codes"].apply(parse_codes)
     df["keywords_list"]   = df["keywords"].apply(parse_keywords)
+    df["affected_stocks_list"] = df["affected_stocks"].apply(parse_stocks)
     df["published_at"]    = pd.to_datetime(df["published_at"], errors="coerce")
     return df
 
@@ -642,6 +667,27 @@ def high_impact_badge(val) -> str:
     if pd.notna(val) and float(val) >= 8:
         return '<span class="hi-badge">High Impact</span>'
     return ""
+
+def relevance_badge(val) -> str:
+    if pd.isna(val):
+        return ""
+    v = float(val)
+    css = "rel-badge rel-badge-high" if v >= 70 else "rel-badge"
+    return f'<span class="{css}">Relevance {v:.0f}</span>'
+
+def affected_stock_chips(stocks: list) -> str:
+    if not isinstance(stocks, list) or not stocks:
+        return ""
+    chips = []
+    for stock in stocks[:6]:
+        if not isinstance(stock, dict):
+            continue
+        symbol = escape(str(stock.get("symbol") or ""))
+        name = escape(str(stock.get("name") or ""))
+        label = f"{symbol} {name}".strip()
+        if label:
+            chips.append(f'<span class="stock-chip">{label}</span>')
+    return f'<div class="stock-row">{"".join(chips)}</div>' if chips else ""
 
 def pending_badge(is_pending: bool) -> str:
     return '<span class="pending-badge">Pending analysis</span>' if is_pending else ""
@@ -857,6 +903,7 @@ avg_score = df_ana["impact_score"].mean() if not df_ana.empty else float("nan")
 pos_cnt   = int((df_ana["sentiment"] == "正面").sum())
 neg_cnt   = int((df_ana["sentiment"] == "負面").sum())
 neu_cnt   = int((df_ana["sentiment"] == "中立").sum())
+high_rel_cnt = int((df_all["relevance_score"].fillna(-1) >= 70).sum())
 pos_pct   = pos_cnt / analyzed * 100 if analyzed else 0
 neg_pct   = neg_cnt / analyzed * 100 if analyzed else 0
 src_counts = df_all["source"].value_counts()
@@ -931,7 +978,7 @@ with st.sidebar:
     # ── 重置篩選預設值（透過 session_state）────────────────────
     if st.button("重置篩選", use_container_width=True, key="btn_reset_filters"):
         for _k in ("filter_keyword", "filter_sentiment", "filter_source",
-                   "filter_sort", "filter_count"):
+                   "filter_relevance", "filter_sort", "filter_count"):
             if _k in st.session_state:
                 del st.session_state[_k]
         st.rerun()
@@ -943,6 +990,8 @@ with st.sidebar:
                                       key="filter_sentiment")
     source_opts        = ["全部來源"] + sorted(df_all["source"].unique().tolist())
     selected_source    = st.selectbox("來源", source_opts, key="filter_source")
+    relevance_filter   = st.selectbox("最低 relevance", ["All", "50+", "70+", "85+"],
+                                      index=0, key="filter_relevance")
     sort_by_score      = st.toggle("依影響力排序", value=False, key="filter_sort")
     news_count_option  = st.selectbox("顯示新聞數量", ["10", "20", "50", "All"],
                                       index=1, key="filter_count")
@@ -1081,7 +1130,7 @@ if page == "Dashboard":
     insight_html = _build_insight(today_cnt, avg_score, pos_pct, neg_pct, src_counts, analyzed)
     st.markdown(f'<div class="insight-bar">{insight_html}</div>', unsafe_allow_html=True)
 
-    # ── 五格 Metric ───────────────────────────────────────────
+    # ── Metric ────────────────────────────────────────────────
     pos_neg_val = f"{pos_pct:.0f}% / {neg_pct:.0f}%"
 
     metrics = [
@@ -1091,13 +1140,15 @@ if page == "Dashboard":
          f"{analyzed} / {total} 篇"),
         ("平均影響力", f"{avg_score:.1f}" if not pd.isna(avg_score) else "—",
          "impact score 均值（1–10）"),
+        ("高相關新聞", str(high_rel_cnt),
+         "relevance score ≥ 70"),
         ("正面 / 負面", pos_neg_val,
          f"正 {pos_cnt} · 負 {neg_cnt} · 中 {neu_cnt}"),
         ("來源占比",   source_metric_rows(src_counts),
          "各來源文章篇數"),
     ]
 
-    mc_cols = st.columns([1, 1, 1, 1, 1.15], gap="medium")
+    mc_cols = st.columns([1, 1, 1, 1, 1, 1.15], gap="medium")
     for col, (label, value, sub) in zip(mc_cols, metrics):
         value_html = value if label == "來源占比" else f'<div class="mc-value">{value}</div>'
         col.markdown(f"""
@@ -1293,6 +1344,12 @@ if page == "Dashboard":
         news_df = news_df[news_df["sentiment"] == selected_sentiment]
     if selected_source != "全部來源":
         news_df = news_df[news_df["source"] == selected_source]
+    if relevance_filter != "All":
+        min_relevance = float(relevance_filter.rstrip("+"))
+        news_df = news_df[
+            news_df["relevance_score"].notna()
+            & (news_df["relevance_score"] >= min_relevance)
+        ]
     if sort_by_score:
         news_df = news_df.sort_values("impact_score", ascending=False, na_position="last")
 
@@ -1340,6 +1397,11 @@ if page == "Dashboard":
                     + "</div>"
                 )
             hi_badge_html = high_impact_badge(row["impact_score"])
+            rel_badge_html = relevance_badge(row.get("relevance_score"))
+            affected_row_html = affected_stock_chips(
+                row.get("affected_stocks_list", [])
+                if "affected_stocks_list" in row.index else []
+            )
             title_html = (
                 f'<a href="{escape(article_url)}" target="_blank">{escape(title_text)}</a>'
                 if article_url else escape(title_text)
@@ -1354,9 +1416,11 @@ if page == "Dashboard":
                     f'<span class="ntime">{pub_time}</span>'
                     f'{senti_chip(row["sentiment"])}'
                     f'{score_pill(row["impact_score"])}'
+                    f'{rel_badge_html}'
                     f'{hi_badge_html}'
                     f'{stock_tag}'
                     f'</div>'
+                    f'{affected_row_html}'
                     f'{kw_row_html}'
                     f'</div>',
                     unsafe_allow_html=True,

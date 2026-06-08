@@ -51,6 +51,9 @@ def create_tables(conn: sqlite3.Connection) -> None:
             impact_score   REAL,                       -- 0.0 – 100.0
             reason         TEXT,                       -- Claude 判斷理由
             keywords       TEXT    DEFAULT '[]',       -- JSON，市場關鍵字 ["AI晶片","CoWoS"]
+            relevance_score REAL,                      -- 0–100，新聞值得關注程度
+            affected_stocks TEXT    DEFAULT '[]',      -- JSON，可能受影響股票
+            analysis_method TEXT,                      -- rule_based / claude / hybrid
             crawled_at     TEXT    NOT NULL
         );
 
@@ -127,7 +130,25 @@ def create_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_articles_published  ON articles (published_at DESC);
         CREATE INDEX IF NOT EXISTS idx_pipeline_runs_at    ON pipeline_runs (ran_at DESC);
     """)
+    _ensure_article_analysis_columns(conn)
     conn.commit()
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any((row["name"] if hasattr(row, "keys") else row[1]) == column for row in rows)
+
+
+def _ensure_article_analysis_columns(conn: sqlite3.Connection) -> None:
+    """Idempotent migration for productized analysis metadata."""
+    migrations = [
+        ("relevance_score", "ALTER TABLE articles ADD COLUMN relevance_score REAL"),
+        ("affected_stocks", "ALTER TABLE articles ADD COLUMN affected_stocks TEXT DEFAULT '[]'"),
+        ("analysis_method", "ALTER TABLE articles ADD COLUMN analysis_method TEXT"),
+    ]
+    for column, sql in migrations:
+        if not _has_column(conn, "articles", column):
+            conn.execute(sql)
 
 
 # ---------------------------------------------------------------------------
@@ -242,31 +263,40 @@ def update_sentiment(
     impact_score: float,
     reason: str,
     keywords: Optional[list] = None,
+    relevance_score: Optional[float] = None,
+    affected_stocks: Optional[list] = None,
+    analysis_method: Optional[str] = None,
 ) -> None:
     """
     將 Claude API 的分析結果寫回 articles 表。
     keywords 為可選參數，傳入時一併更新；不傳則不覆蓋原有 keywords。
     由 analysis/sentiment.py 呼叫。
     """
+    fields = ["sentiment = ?", "impact_score = ?", "reason = ?"]
+    params: list = [sentiment, impact_score, reason]
+
     if keywords is not None:
-        conn.execute(
-            """
-            UPDATE articles
-            SET sentiment = ?, impact_score = ?, reason = ?, keywords = ?
-            WHERE id = ?
-            """,
-            (sentiment, impact_score, reason,
-             json.dumps(keywords, ensure_ascii=False), article_id),
-        )
-    else:
-        conn.execute(
-            """
-            UPDATE articles
-            SET sentiment = ?, impact_score = ?, reason = ?
-            WHERE id = ?
-            """,
-            (sentiment, impact_score, reason, article_id),
-        )
+        fields.append("keywords = ?")
+        params.append(json.dumps(keywords, ensure_ascii=False))
+    if relevance_score is not None:
+        fields.append("relevance_score = ?")
+        params.append(float(relevance_score))
+    if affected_stocks is not None:
+        fields.append("affected_stocks = ?")
+        params.append(json.dumps(affected_stocks, ensure_ascii=False))
+    if analysis_method is not None:
+        fields.append("analysis_method = ?")
+        params.append(analysis_method)
+
+    params.append(article_id)
+    conn.execute(
+        f"""
+        UPDATE articles
+        SET {", ".join(fields)}
+        WHERE id = ?
+        """,
+        params,
+    )
     conn.commit()
 
 
